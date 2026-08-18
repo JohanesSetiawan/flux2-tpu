@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Local checkpoint cache and logs are session-specific and downloaded
+# fresh each run; they do not belong in version control.
+*.log
+*.txt.log
+flux2_klein_checkpoint_cache/
+flux2_klein_inference_log.txt
+
+.DS_Store

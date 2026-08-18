@@ -1,0 +1,8 @@
+jax
+orbax-checkpoint
+huggingface_hub
+numpy
+
+# Only used for its tokenizer loader; does not require a torch backend
+# for tokenization.
+transformers
