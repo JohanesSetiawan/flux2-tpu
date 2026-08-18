@@ -172,6 +172,28 @@ class VaeLayerConfig:
 
 
 @dataclass(frozen=True)
+class VaeDecoderConfig:
+    """
+    Structural parameters of the autoencoder decoder.
+
+    Only values that cannot be discovered from the checkpoint itself
+    appear here. The number of upsampling levels, the number of residual
+    blocks per level, and every channel count are deliberately absent:
+    they are read from the restored parameter dictionary at run time, so
+    a checkpoint with a different depth would be handled correctly
+    rather than silently mismatched against a hardcoded assumption.
+    """
+
+    # The encoder packs each 2x2 spatial block into the channel axis
+    # before the latent is stored, so decoding begins by reversing that.
+    # Latent channel count is therefore latent_channels_after_patchify
+    # divided by the square of this value.
+    latent_patch_size: int = 2
+
+    layer: VaeLayerConfig = field(default_factory=VaeLayerConfig)
+
+
+@dataclass(frozen=True)
 class CheckpointSourceConfig:
     """Where the converted JAX-native checkpoint bundle is downloaded from."""
 

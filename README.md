@@ -30,7 +30,8 @@ in its development.**
 | Logging | Done |
 | VAE layer primitives | Done |
 | VAE residual and attention blocks | Done |
-| VAE full decoder assembly and parity | Not started |
+| VAE full decoder assembly | Done |
+| VAE parity against the reference implementation | Not started |
 | Text encoder (Qwen3-4B) | Not started |
 | Diffusion transformer | Not started |
 | Sampling loop and pipeline | Not started |
@@ -82,13 +83,15 @@ flux2_klein/
 ├── checkpoint.py      # download and restore the JAX-native bundle
 ├── layers.py          # VAE layer primitives (pure functions)
 ├── parameters.py      # flat-checkpoint parameter access helpers
-└── vae_blocks.py      # residual and attention blocks
+├── vae_blocks.py      # residual and attention blocks
+└── vae.py             # full decoder
 tests/
 ├── run_all_tests.py   # single entry point, writes a full log
 ├── test_config.py
 ├── test_checkpoint.py
 ├── test_layers.py
-└── test_vae_blocks.py
+├── test_vae_blocks.py
+└── test_vae.py
 ```
 
 Numeric code is pure: it takes arrays and a configuration object,

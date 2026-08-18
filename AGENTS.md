@@ -159,13 +159,15 @@ flux2_klein/
 ├── checkpoint.py      # download and restore the JAX-native bundle
 ├── layers.py          # VAE layer primitives (pure functions)
 ├── parameters.py      # flat-checkpoint parameter access helpers
-└── vae_blocks.py      # residual and attention blocks
+├── vae_blocks.py      # residual and attention blocks
+└── vae.py             # full decoder
 tests/
 ├── run_all_tests.py   # single entry point, writes a full log
 ├── test_config.py
 ├── test_checkpoint.py
 ├── test_layers.py
-└── test_vae_blocks.py
+├── test_vae_blocks.py
+└── test_vae.py
 ```
 
 Dependency direction is strictly one-way: `layers` depends on `config`;
@@ -301,10 +303,18 @@ because the original `.py` files happened to be present in the working
 directory, so a stale import resolved by accident. Validate notebooks in
 a directory containing nothing but the notebook itself.
 
-Related: the checkpoint bundle repository was private during early
-development, so `checkpoint.py`'s download path is verified by **mocks
-only**. Its end-to-end behaviour against the real Hub has not been
-exercised in a sandbox. Treat the first real run as a validation step.
+Related: `checkpoint.py`'s download path was originally verified by
+mocks only, because the bundle repository was private. It has since
+been exercised end to end against the real, now-public repository, including the per-component download path.
+
+### Decoder structure is discovered, not assumed
+
+`vae.py` reads the number of upsampling levels, the number of residual
+blocks per level, and whether a level upsamples, from the checkpoint's
+own keys. Do not replace this with hardcoded counts. The real decoder
+has four levels of three blocks each, with levels 3, 2 and 1 carrying
+an upsample convolution and level 0 not, but that is an observation
+about the current checkpoint rather than a constant to encode.
 
 ## 7. Why there is no logging inside numeric functions
 
@@ -326,14 +336,15 @@ Done:
   nearest-neighbour upsample, SiLU
 - Flat-checkpoint parameter access helpers
 - VAE residual block and chunked attention block
+- Full VAE decoder, verified to run against the real checkpoint
 
 Remaining, in intended order. Each phase should be finished and tested
 before the next begins, rather than writing everything and debugging at
 the end:
 
-1. **VAE**: full decoder assembly (stem, middle section, four
-   upsampling levels, head), parity against the reference, resolution
-   scaling. Residual and attention blocks are done.
+1. **VAE**: parity against the reference implementation, and
+   measurement of decode cost at the target resolutions. Assembly is
+   done and runs against the real checkpoint.
 2. **Text encoder**: RMSNorm, RoPE, masking, GQA attention (32 query
    heads, 8 key/value heads), SwiGLU MLP, single layer, 27-layer stack,
    chat template and tokenization.
