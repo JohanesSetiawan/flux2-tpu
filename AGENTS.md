@@ -157,12 +157,15 @@ flux2_klein/
 ├── logging_setup.py   # dual console/file logging
 ├── config.py          # every tunable value, as dataclasses
 ├── checkpoint.py      # download and restore the JAX-native bundle
-└── layers.py          # VAE layer primitives (pure functions)
+├── layers.py          # VAE layer primitives (pure functions)
+├── parameters.py      # flat-checkpoint parameter access helpers
+└── vae_blocks.py      # residual and attention blocks
 tests/
 ├── run_all_tests.py   # single entry point, writes a full log
 ├── test_config.py
 ├── test_checkpoint.py
-└── test_layers.py
+├── test_layers.py
+└── test_vae_blocks.py
 ```
 
 Dependency direction is strictly one-way: `layers` depends on `config`;
@@ -321,14 +324,16 @@ Done:
 - Dual console/file logging
 - VAE layer primitives: convolution, group normalization,
   nearest-neighbour upsample, SiLU
+- Flat-checkpoint parameter access helpers
+- VAE residual block and chunked attention block
 
 Remaining, in intended order. Each phase should be finished and tested
 before the next begins, rather than writing everything and debugging at
 the end:
 
-1. **VAE**: residual block, attention block (with query chunking, see
-   below), full decoder assembly, parity against the reference,
-   resolution scaling.
+1. **VAE**: full decoder assembly (stem, middle section, four
+   upsampling levels, head), parity against the reference, resolution
+   scaling. Residual and attention blocks are done.
 2. **Text encoder**: RMSNorm, RoPE, masking, GQA attention (32 query
    heads, 8 key/value heads), SwiGLU MLP, single layer, 27-layer stack,
    chat template and tokenization.

@@ -26,6 +26,7 @@ from flux2_klein.logging_setup import configure_logging
 from tests.test_checkpoint import run_checkpoint_tests
 from tests.test_config import run_config_tests
 from tests.test_layers import run_layer_tests
+from tests.test_vae_blocks import run_vae_block_tests
 
 
 DEFAULT_LOG_FILE_PATH = Path("test_run_log.txt")
@@ -38,6 +39,7 @@ TEST_SUITES = (
     ("config", run_config_tests),
     ("checkpoint", run_checkpoint_tests),
     ("layers", run_layer_tests),
+    ("vae_blocks", run_vae_block_tests),
 )
 
 

@@ -153,6 +153,23 @@ class VaeLayerConfig:
     upsample_scale_factor: int = 2
     precision: NumericPrecision = NumericPrecision.HIGHEST
 
+    # Number of query positions processed per chunk in the decoder's
+    # middle attention block.
+    #
+    # This block is the single heaviest memory consumer in the decoder.
+    # It is a single attention head whose head dimension equals the
+    # channel count (512), operating over every spatial position of the
+    # latent. At 1024x1024 output the latent is 128x128, giving 16384
+    # query positions, so a fully materialized float32 score matrix is
+    # 16384 * 16384 * 4 bytes, slightly over one gigabyte, for one
+    # block. Chunking the query axis bounds that to
+    # chunk_size * sequence_length instead.
+    #
+    # The value is a memory/throughput tradeoff and does not affect
+    # results: chunked and unchunked attention are numerically
+    # equivalent, which the test suite asserts directly.
+    attention_query_chunk_size: int = 2048
+
 
 @dataclass(frozen=True)
 class CheckpointSourceConfig:
