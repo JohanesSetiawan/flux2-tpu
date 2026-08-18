@@ -167,7 +167,9 @@ tests/
 ├── test_checkpoint.py
 ├── test_layers.py
 ├── test_vae_blocks.py
-└── test_vae.py
+├── test_vae.py
+└── integration/       # needs network and PyTorch, run explicitly
+    └── test_vae_parity.py
 ```
 
 Dependency direction is strictly one-way: `layers` depends on `config`;
@@ -316,6 +318,15 @@ has four levels of three blocks each, with levels 3, 2 and 1 carrying
 an upsample convolution and level 0 not, but that is an observation
 about the current checkpoint rather than a constant to encode.
 
+### Precision levels are untestable on CPU
+
+`NumericPrecision` maps onto `jax.lax.Precision`, which decomposes a
+float32 matmul into one, three or six bfloat16 passes. That decomposition
+happens on TPU only. On CPU all three settings produce bit-identical
+results, as the parity run confirmed. The choice between HIGHEST and
+HIGH therefore cannot be evaluated in a CPU sandbox and must be measured
+on real hardware before either is treated as settled.
+
 ## 7. Why there is no logging inside numeric functions
 
 Python-level logging inside a `jax.jit`-compiled function executes once
@@ -327,6 +338,17 @@ checkpoint load, pipeline stage boundaries, and the test runner.
 
 ## 8. Current status and remaining work
 
+Measured parity results, for comparison when the transformer and text
+encoder reach the same stage:
+
+| Component | Latent shape | PSNR | Max abs diff |
+|---|---|---|---|
+| VAE decoder | 16x16 square | 131.53 dB | 5.2e-06 |
+| VAE decoder | 12x20 non-square | 131.24 dB | 5.3e-06 |
+
+A square-only parity test cannot detect a height/width transposition,
+since both axes are the same length. Always include a non-square case.
+
 Done:
 
 - Configuration, residency strategy, resolution buckets
@@ -336,15 +358,17 @@ Done:
   nearest-neighbour upsample, SiLU
 - Flat-checkpoint parameter access helpers
 - VAE residual block and chunked attention block
-- Full VAE decoder, verified to run against the real checkpoint
+- Full VAE decoder, verified numerically against the reference
+  PyTorch implementation at 131 dB PSNR on real weights
 
 Remaining, in intended order. Each phase should be finished and tested
 before the next begins, rather than writing everything and debugging at
 the end:
 
-1. **VAE**: parity against the reference implementation, and
-   measurement of decode cost at the target resolutions. Assembly is
-   done and runs against the real checkpoint.
+1. **VAE**: done. Assembly, real-weight execution and reference parity
+   are all complete. What remains is measuring decode cost at the
+   target resolutions on actual TPU hardware, which cannot be done in
+   a CPU sandbox.
 2. **Text encoder**: RMSNorm, RoPE, masking, GQA attention (32 query
    heads, 8 key/value heads), SwiGLU MLP, single layer, 27-layer stack,
    chat template and tokenization.

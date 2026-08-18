@@ -31,7 +31,7 @@ in its development.**
 | VAE layer primitives | Done |
 | VAE residual and attention blocks | Done |
 | VAE full decoder assembly | Done |
-| VAE parity against the reference implementation | Not started |
+| VAE parity against the reference implementation | Done, 131 dB PSNR |
 | Text encoder (Qwen3-4B) | Not started |
 | Diffusion transformer | Not started |
 | Sampling loop and pipeline | Not started |
@@ -91,7 +91,9 @@ tests/
 ├── test_checkpoint.py
 ├── test_layers.py
 ├── test_vae_blocks.py
-└── test_vae.py
+├── test_vae.py
+└── integration/       # needs network and PyTorch, run explicitly
+    └── test_vae_parity.py
 ```
 
 Numeric code is pure: it takes arrays and a configuration object,
@@ -118,6 +120,17 @@ therefore need 64-bit mode enabled:
 
 ```bash
 JAX_ENABLE_X64=1 python -m tests.run_all_tests
+```
+
+Integration tests live in `tests/integration/` and are excluded from
+that run because they require network access and, for parity testing,
+PyTorch. PyTorch is used only to produce reference outputs and is never
+a dependency of the `flux2_klein` package:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+git clone https://github.com/black-forest-labs/flux2 /tmp/flux2
+python -m tests.integration.test_vae_parity --reference-source-path /tmp/flux2
 ```
 
 Tests come in two tiers. Smoke tests check shape, dtype and basic

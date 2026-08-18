@@ -8,6 +8,7 @@ venv/
 # Local checkpoint cache and logs are session-specific and downloaded
 # fresh each run; they do not belong in version control.
 *.log
+vae_parity_log.txt
 test_run_log.txt
 *.txt.log
 flux2_klein_checkpoint_cache/
