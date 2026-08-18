@@ -7,7 +7,7 @@ some cases PyTorch.
 
 PyTorch is used here **only** to produce reference outputs to compare
 against. It is not, and must never become, a dependency of the
-`flux2_klein` package itself.
+`src` package itself.
 
 Run them individually and explicitly:
 

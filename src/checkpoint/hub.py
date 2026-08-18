@@ -1,17 +1,8 @@
 """
-Checkpoint download and restore.
+Downloading the weight bundle from the Hugging Face Hub.
 
-This module is the only place in the inference package that talks to
-the network or reads the checkpoint bundle from disk. It downloads the
-bundle produced by the conversion pipeline (a manifest, three Orbax
-parameter directories, and a tokenizer folder) from the Hub, and
-restores individual components on request.
-
-The bundle repository is private, so downloading it requires a Hugging
-Face access token even for read access. Token resolution follows the
-same layered approach used when the bundle was uploaded: a Kaggle
-Secret first, then an environment variable, then an interactive prompt.
-The token itself is never logged.
+This module and `restore` are the only places in the package that touch
+the network or the filesystem. Both log every stage.
 """
 
 from __future__ import annotations
@@ -21,10 +12,9 @@ import os
 from pathlib import Path
 from typing import Iterable
 
-import orbax.checkpoint as ocp
 from huggingface_hub import snapshot_download
 
-from .config import CheckpointSourceConfig
+from ..config import CheckpointSourceConfig
 
 
 VALID_COMPONENT_NAMES = frozenset({"text_encoder", "transformer", "vae"})
@@ -157,31 +147,3 @@ def download_bundle(
 
     logger.info("Checkpoint bundle available at %s", local_path)
     return local_path
-
-
-def restore_component(
-    bundle_path: Path,
-    component_name: str,
-    logger: logging.Logger,
-) -> dict:
-    """
-    Restore a single component's parameter pytree from an already
-    downloaded bundle.
-
-    Parameters
-    ----------
-    bundle_path:
-        Local path returned by download_bundle.
-    component_name:
-        One of "text_encoder", "transformer", "vae".
-    """
-    validate_component_name(component_name)
-
-    component_directory = bundle_path / PARAMETERS_SUBDIRECTORY_NAME / component_name
-    logger.info("Restoring %s parameters from %s", component_name, component_directory)
-
-    checkpointer = ocp.StandardCheckpointer()
-    params = checkpointer.restore(component_directory)
-
-    logger.info("Restored %s parameters", component_name)
-    return params

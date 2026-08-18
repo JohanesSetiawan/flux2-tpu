@@ -153,28 +153,45 @@ uses.
 ## 3. Repository layout and architecture
 
 ```
-flux2_klein/
-├── logging_setup.py   # dual console/file logging
-├── config.py          # every tunable value, as dataclasses
-├── checkpoint.py      # download and restore the JAX-native bundle
-├── layers.py          # VAE layer primitives (pure functions)
-├── parameters.py      # flat-checkpoint parameter access helpers
-├── vae_blocks.py      # residual and attention blocks
-└── vae.py             # full decoder
-tests/
-├── run_all_tests.py   # single entry point, writes a full log
-├── test_config.py
-├── test_checkpoint.py
-├── test_layers.py
-├── test_vae_blocks.py
-├── test_vae.py
-└── integration/       # needs network and PyTorch, run explicitly
-    └── test_vae_parity.py
+src/
+├── config/            configuration dataclasses and enumerations
+│   ├── precision.py       NumericPrecision
+│   ├── runtime.py         residency strategy, resolution buckets
+│   ├── vae.py             decoder layer and structure settings
+│   └── checkpoint.py      bundle source, top-level InferenceConfig
+├── utils/             cross-cutting, no model knowledge
+│   └── logging.py
+├── checkpoint/        loading weights and addressing them
+│   ├── hub.py             download from the Hub
+│   ├── restore.py         restore Orbax pytrees
+│   └── parameters.py      flat-key access helpers
+├── layers/            individual mathematical primitives
+│   ├── convolution.py
+│   ├── normalization.py
+│   ├── resampling.py
+│   └── activation.py
+├── blocks/            composites assembled from primitives
+│   ├── residual.py
+│   └── attention.py
+└── models/            complete networks assembled from blocks
+    └── vae.py
+
+tests/                 mirrors the source layout
+├── run_all_tests.py       single entry point, writes a full log
+├── config/ layers/ blocks/ models/ checkpoint/
+└── integration/           needs network and PyTorch, run explicitly
 ```
 
-Dependency direction is strictly one-way: `layers` depends on `config`;
-`checkpoint` depends on `config`; nothing depends on `layers` yet.
-`config` depends on nothing. Do not introduce a cycle.
+Dependencies run strictly downward through that list: a layer may
+import from config and utils but never from blocks; a block may import
+from layers but never from models. Numeric code (layers, blocks,
+models) is pure, taking arrays and a configuration object and
+performing no IO or logging. Orchestration code (checkpoint) performs
+IO and logs every stage.
+
+Do not introduce a cycle, and do not flatten this back into a single
+directory. The structure exists so that a reader looking for how one
+concern is handled finds a single place rather than four.
 
 Layering rules:
 

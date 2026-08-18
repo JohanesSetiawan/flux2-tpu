@@ -1,5 +1,5 @@
 """
-Tests for flux2_klein.vae.
+Tests for src.models.vae.
 
 Decoder parameters here are synthesised at run time by
 _make_synthetic_decoder_parameters, which builds a small but
@@ -25,8 +25,8 @@ import logging
 import jax.numpy as jnp
 import numpy as np
 
-from flux2_klein.config import NumericPrecision, VaeDecoderConfig, VaeLayerConfig
-from flux2_klein.vae import (
+from src.config import NumericPrecision, VaeDecoderConfig, VaeLayerConfig
+from src.models.vae import (
     DecoderStructureError,
     apply_post_quantization_projection,
     decode_latent,

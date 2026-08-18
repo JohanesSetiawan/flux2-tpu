@@ -1,5 +1,5 @@
 """
-Tests for flux2_klein.layers.
+Tests for src.layers.
 
 Two tiers, both driven by dynamically generated inputs rather than
 stored golden arrays:
@@ -29,8 +29,8 @@ import logging
 import jax.numpy as jnp
 import numpy as np
 
-from flux2_klein.config import NumericPrecision, VaeLayerConfig
-from flux2_klein.layers import (
+from src.config import NumericPrecision, VaeLayerConfig
+from src.layers import (
     convolution_2d,
     group_normalization,
     nearest_neighbor_upsample_2d,

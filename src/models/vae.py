@@ -27,15 +27,15 @@ import re
 import jax.numpy as jnp
 import numpy as np
 
-from .config import VaeDecoderConfig
-from .layers import (
+from ..blocks import attention_block, residual_block
+from ..checkpoint import require_parameter, select_parameter_group
+from ..config import VaeDecoderConfig
+from ..layers import (
     convolution_2d,
     group_normalization,
     nearest_neighbor_upsample_2d,
     sigmoid_linear_unit,
 )
-from .parameters import require_parameter, select_parameter_group
-from .vae_blocks import attention_block, residual_block
 
 
 # Key prefixes within the decoder's flat parameter dictionary.

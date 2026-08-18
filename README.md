@@ -77,30 +77,41 @@ tuned against:
 ## Layout
 
 ```
-flux2_klein/
-├── logging_setup.py   # dual console and file logging
-├── config.py          # every tunable value, as dataclasses
-├── checkpoint.py      # download and restore the JAX-native bundle
-├── layers.py          # VAE layer primitives (pure functions)
-├── parameters.py      # flat-checkpoint parameter access helpers
-├── vae_blocks.py      # residual and attention blocks
-└── vae.py             # full decoder
-tests/
-├── run_all_tests.py   # single entry point, writes a full log
-├── test_config.py
-├── test_checkpoint.py
-├── test_layers.py
-├── test_vae_blocks.py
-├── test_vae.py
-└── integration/       # needs network and PyTorch, run explicitly
-    └── test_vae_parity.py
+src/
+├── config/            configuration dataclasses and enumerations
+│   ├── precision.py       NumericPrecision
+│   ├── runtime.py         residency strategy, resolution buckets
+│   ├── vae.py             decoder layer and structure settings
+│   └── checkpoint.py      bundle source, top-level InferenceConfig
+├── utils/             cross-cutting, no model knowledge
+│   └── logging.py
+├── checkpoint/        loading weights and addressing them
+│   ├── hub.py             download from the Hub
+│   ├── restore.py         restore Orbax pytrees
+│   └── parameters.py      flat-key access helpers
+├── layers/            individual mathematical primitives
+│   ├── convolution.py
+│   ├── normalization.py
+│   ├── resampling.py
+│   └── activation.py
+├── blocks/            composites assembled from primitives
+│   ├── residual.py
+│   └── attention.py
+└── models/            complete networks assembled from blocks
+    └── vae.py
+
+tests/                 mirrors the source layout
+├── run_all_tests.py       single entry point, writes a full log
+├── config/ layers/ blocks/ models/ checkpoint/
+└── integration/           needs network and PyTorch, run explicitly
 ```
 
-Numeric code is pure: it takes arrays and a configuration object,
-returns arrays, and performs no IO or logging. Orchestration code
-performs IO and logs every stage to both the console and a text file.
-Interfaces (notebook, widgets) will contain no logic and only call into
-the package.
+Dependencies run strictly downward through that list: a layer may
+import from config and utils but never from blocks; a block may import
+from layers but never from models. Numeric code (layers, blocks,
+models) is pure, taking arrays and a configuration object and
+performing no IO or logging. Orchestration code (checkpoint) performs
+IO and logs every stage.
 
 ## Setup
 
@@ -125,7 +136,7 @@ JAX_ENABLE_X64=1 python -m tests.run_all_tests
 Integration tests live in `tests/integration/` and are excluded from
 that run because they require network access and, for parity testing,
 PyTorch. PyTorch is used only to produce reference outputs and is never
-a dependency of the `flux2_klein` package:
+a dependency of the `src` package:
 
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu

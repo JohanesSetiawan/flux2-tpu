@@ -1,17 +1,5 @@
 """
-Composite blocks of the autoencoder decoder.
-
-Two blocks are defined here, both assembled purely from the primitives
-in layers.py and both pure functions of their inputs:
-
-- residual_block: the decoder's basic unit, repeated throughout the
-  middle section and every upsampling level.
-- attention_block: a single self-attention layer applied once, in the
-  decoder's middle section, at latent resolution.
-
-Both take a parameter group already sliced out of the flat checkpoint
-dictionary by parameters.select_parameter_group, so neither knows about
-the checkpoint's flat naming convention.
+The decoder's self-attention block, with memory-bounded attention.
 """
 
 from __future__ import annotations
@@ -20,120 +8,25 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .config import VaeLayerConfig
-from .layers import convolution_2d, group_normalization, sigmoid_linear_unit
-from .parameters import has_parameter_group, require_parameter, select_parameter_group
+from ..config import VaeLayerConfig
+from ..layers import convolution_2d, group_normalization
+from ._parameter_access import convolution_parameters, normalization_parameters
 
 
-# Parameter key names within a residual block's group. Named here rather
-# than written inline so the checkpoint's vocabulary appears in exactly
-# one place per block type.
-RESIDUAL_FIRST_NORM_PREFIX = "norm1"
-RESIDUAL_SECOND_NORM_PREFIX = "norm2"
-RESIDUAL_FIRST_CONVOLUTION_PREFIX = "conv1"
-RESIDUAL_SECOND_CONVOLUTION_PREFIX = "conv2"
-RESIDUAL_SHORTCUT_PREFIX = "nin_shortcut"
-
-# Parameter key names within an attention block's group.
+# Parameter key prefixes within an attention block's group.
 ATTENTION_NORM_PREFIX = "norm"
 ATTENTION_QUERY_PREFIX = "q"
 ATTENTION_KEY_PREFIX = "k"
 ATTENTION_VALUE_PREFIX = "v"
 ATTENTION_OUTPUT_PREFIX = "proj_out"
 
-WEIGHT_SUFFIX = "weight"
-BIAS_SUFFIX = "bias"
-
 # Attention scores are exponentiated, so they are accumulated in at
 # least float32 for the same reason normalization statistics are: a
 # softmax computed in bfloat16 over thousands of positions loses
 # resolution in the tail of the distribution. Applied as a floor via
 # jnp.promote_types, never as an unconditional cast, so float64 callers
-# (the regression tests) keep their precision.
+# keep their precision.
 MINIMUM_ATTENTION_ACCUMULATION_DTYPE = jnp.float32
-
-
-def _normalization_parameters(
-    parameters: dict[str, np.ndarray], prefix: str, context: str
-) -> tuple[np.ndarray, np.ndarray]:
-    """Fetch the scale and shift of a normalization layer as a pair."""
-    scale = require_parameter(parameters, f"{prefix}_{WEIGHT_SUFFIX}", context)
-    shift = require_parameter(parameters, f"{prefix}_{BIAS_SUFFIX}", context)
-    return scale, shift
-
-
-def _convolution_parameters(
-    parameters: dict[str, np.ndarray], prefix: str, context: str
-) -> tuple[np.ndarray, np.ndarray]:
-    """Fetch the kernel and bias of a convolution as a pair."""
-    kernel = require_parameter(parameters, f"{prefix}_{WEIGHT_SUFFIX}", context)
-    bias = require_parameter(parameters, f"{prefix}_{BIAS_SUFFIX}", context)
-    return kernel, bias
-
-
-def residual_block(
-    activations: jnp.ndarray,
-    parameters: dict[str, np.ndarray],
-    config: VaeLayerConfig,
-) -> jnp.ndarray:
-    """
-    Apply one residual block: two normalize-activate-convolve stages
-    added to a shortcut path.
-
-    The shortcut is the identity when the block preserves channel count,
-    and a learned 1x1 projection when it does not. Which case applies is
-    determined by whether the checkpoint contains shortcut weights for
-    this block, rather than by comparing channel counts, because the
-    checkpoint is the authority on what the trained model actually does.
-    A block that changes channel count without shortcut weights present
-    is a structural mismatch and will fail loudly at the addition rather
-    than being silently papered over.
-
-    Note the ordering: normalization comes before the activation and the
-    convolution, not after, and the shortcut is added after the second
-    convolution with no activation applied to the sum. This matches the
-    reference implementation exactly.
-
-    Parameters
-    ----------
-    activations:
-        Input, shape (batch, height, width, in_channels).
-    parameters:
-        Parameter group for this block, containing norm1, conv1, norm2,
-        conv2, and optionally nin_shortcut entries.
-    config:
-        Normalization and precision settings.
-    """
-    context = "residual_block"
-
-    first_norm_scale, first_norm_shift = _normalization_parameters(
-        parameters, RESIDUAL_FIRST_NORM_PREFIX, context
-    )
-    hidden = group_normalization(activations, first_norm_scale, first_norm_shift, config)
-    hidden = sigmoid_linear_unit(hidden)
-    first_kernel, first_bias = _convolution_parameters(
-        parameters, RESIDUAL_FIRST_CONVOLUTION_PREFIX, context
-    )
-    hidden = convolution_2d(hidden, first_kernel, first_bias, config)
-
-    second_norm_scale, second_norm_shift = _normalization_parameters(
-        parameters, RESIDUAL_SECOND_NORM_PREFIX, context
-    )
-    hidden = group_normalization(hidden, second_norm_scale, second_norm_shift, config)
-    hidden = sigmoid_linear_unit(hidden)
-    second_kernel, second_bias = _convolution_parameters(
-        parameters, RESIDUAL_SECOND_CONVOLUTION_PREFIX, context
-    )
-    hidden = convolution_2d(hidden, second_kernel, second_bias, config)
-
-    shortcut = activations
-    if has_parameter_group(parameters, RESIDUAL_SHORTCUT_PREFIX):
-        shortcut_kernel, shortcut_bias = _convolution_parameters(
-            parameters, RESIDUAL_SHORTCUT_PREFIX, context
-        )
-        shortcut = convolution_2d(activations, shortcut_kernel, shortcut_bias, config)
-
-    return shortcut + hidden
 
 
 def _chunked_self_attention(
@@ -235,14 +128,14 @@ def attention_block(
     context = "attention_block"
     batch, height, width, channels = activations.shape
 
-    norm_scale, norm_shift = _normalization_parameters(
+    norm_scale, norm_shift = normalization_parameters(
         parameters, ATTENTION_NORM_PREFIX, context
     )
     normalized = group_normalization(activations, norm_scale, norm_shift, config)
 
     projections = []
     for prefix in (ATTENTION_QUERY_PREFIX, ATTENTION_KEY_PREFIX, ATTENTION_VALUE_PREFIX):
-        kernel, bias = _convolution_parameters(parameters, prefix, context)
+        kernel, bias = convolution_parameters(parameters, prefix, context)
         projected = convolution_2d(normalized, kernel, bias, config)
         projections.append(projected.reshape(batch, height * width, channels))
 
@@ -253,7 +146,7 @@ def attention_block(
     )
     attended = attended.reshape(batch, height, width, channels)
 
-    output_kernel, output_bias = _convolution_parameters(
+    output_kernel, output_bias = convolution_parameters(
         parameters, ATTENTION_OUTPUT_PREFIX, context
     )
     projected_output = convolution_2d(attended, output_kernel, output_bias, config)

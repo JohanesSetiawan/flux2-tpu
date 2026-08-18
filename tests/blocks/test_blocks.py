@@ -1,5 +1,5 @@
 """
-Tests for flux2_klein.parameters and flux2_klein.vae_blocks.
+Tests for src.checkpoint.parameters and src.blocks.
 
 The most important test in this module is
 test_regression_chunked_attention_equals_unchunked. Query chunking
@@ -22,18 +22,15 @@ import logging
 import jax.numpy as jnp
 import numpy as np
 
-from flux2_klein.config import NumericPrecision, VaeLayerConfig
-from flux2_klein.parameters import (
+from src.config import NumericPrecision, VaeLayerConfig
+from src.checkpoint import (
     MissingParameterError,
     has_parameter_group,
     require_parameter,
     select_parameter_group,
 )
-from flux2_klein.vae_blocks import (
-    _chunked_self_attention,
-    attention_block,
-    residual_block,
-)
+from src.blocks import attention_block, residual_block
+from src.blocks.attention import _chunked_self_attention
 
 
 NUMERICAL_TOLERANCE = 1e-10

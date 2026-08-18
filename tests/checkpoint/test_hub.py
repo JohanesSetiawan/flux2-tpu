@@ -17,12 +17,12 @@ import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from flux2_klein.checkpoint import (
+from src.checkpoint import (
     VALID_COMPONENT_NAMES,
     download_bundle,
     restore_component,
 )
-from flux2_klein.config import CheckpointSourceConfig
+from src.config import CheckpointSourceConfig
 
 
 def _silent_logger() -> logging.Logger:
@@ -36,7 +36,7 @@ def test_download_bundle_passes_repo_id_and_token_through() -> None:
         huggingface_repo_id="someone/some-repo",
         local_cache_directory=Path("/tmp/flux2_klein_test_cache"),
     )
-    with patch("flux2_klein.checkpoint.snapshot_download") as mock_snapshot_download:
+    with patch("src.checkpoint.hub.snapshot_download") as mock_snapshot_download:
         mock_snapshot_download.return_value = "/tmp/flux2_klein_test_cache"
 
         result = download_bundle(source_config, _silent_logger(), token="fake_token_value")
@@ -48,7 +48,7 @@ def test_download_bundle_passes_repo_id_and_token_through() -> None:
 
 
 def test_restore_component_builds_correct_path_and_restores() -> None:
-    with patch("flux2_klein.checkpoint.ocp.StandardCheckpointer") as mock_checkpointer_class:
+    with patch("src.checkpoint.restore.ocp.StandardCheckpointer") as mock_checkpointer_class:
         mock_checkpointer = MagicMock()
         mock_checkpointer.restore.return_value = {"fake": "params"}
         mock_checkpointer_class.return_value = mock_checkpointer

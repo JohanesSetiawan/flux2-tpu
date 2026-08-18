@@ -1,18 +1,27 @@
 """
-Single entry point for the whole test suite.
+Single entry point for the whole unit test suite.
 
 Runs every suite in dependency order (configuration first, then the
-primitives built on it) and writes a complete, timestamped log to a
-text file as well as the console. Every suite added to the codebase
-should be registered in TEST_SUITES below so that one command
-exercises everything.
+primitives built on it, then composites, then complete models) and
+writes a timestamped log to a text file as well as the console. A
+failure appears in the most foundational layer first, so the cause is
+distinguishable from its consequences.
 
-Exits with a non-zero status on the first failure, so it can be used
-directly as a gate in a pre-commit hook or CI step.
+Every suite added to the codebase should be registered in TEST_SUITES
+below, so that one command exercises everything. Integration tests are
+deliberately excluded: they need network access and, for parity
+testing, PyTorch. See tests/integration/README.md.
+
+Exits non-zero on the first failure, so it can serve directly as a
+pre-commit or CI gate.
 
 Usage:
     python -m tests.run_all_tests
     python -m tests.run_all_tests --log-file path/to/log.txt
+
+Regression suites compare against float64 oracles and therefore need
+64-bit mode:
+    JAX_ENABLE_X64=1 python -m tests.run_all_tests
 """
 
 from __future__ import annotations
@@ -22,31 +31,28 @@ import sys
 import traceback
 from pathlib import Path
 
-from flux2_klein.logging_setup import configure_logging
-from tests.test_checkpoint import run_checkpoint_tests
-from tests.test_config import run_config_tests
-from tests.test_layers import run_layer_tests
-from tests.test_vae import run_vae_tests
-from tests.test_vae_blocks import run_vae_block_tests
+from src.utils import configure_logging
+from tests.blocks.test_blocks import run_vae_block_tests
+from tests.checkpoint.test_hub import run_checkpoint_tests
+from tests.config.test_runtime import run_config_tests
+from tests.layers.test_primitives import run_layer_tests
+from tests.models.test_vae import run_vae_tests
 
 
 DEFAULT_LOG_FILE_PATH = Path("test_run_log.txt")
 TEST_RUNNER_LOGGER_NAME = "flux2_klein.tests"
 
-# Ordered so that a failure appears in the most foundational layer
-# first: a broken config makes every later suite's failure a
-# consequence rather than a cause.
 TEST_SUITES = (
     ("config", run_config_tests),
     ("checkpoint", run_checkpoint_tests),
     ("layers", run_layer_tests),
-    ("vae_blocks", run_vae_block_tests),
-    ("vae", run_vae_tests),
+    ("blocks", run_vae_block_tests),
+    ("models", run_vae_tests),
 )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the full flux2_klein test suite.")
+    parser = argparse.ArgumentParser(description="Run the full unit test suite.")
     parser.add_argument(
         "--log-file",
         type=Path,

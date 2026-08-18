@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 
-from flux2_klein.config import (
+from src.config import (
     MAXIMUM_RECOMMENDED_IMAGE_TOKENS,
     MemoryResidencyStrategy,
     ResolutionBucket,

@@ -9,7 +9,7 @@ produce the same numbers as the implementation it was ported from".
 It is an integration test, kept out of the unit suite, because it needs
 three things that suite deliberately avoids: network access, roughly
 half a gigabyte of downloads, and PyTorch. PyTorch appears here only to
-produce reference outputs; it is not a dependency of the flux2_klein
+produce reference outputs; it is not a dependency of the src
 package and must not become one.
 
 Method
@@ -43,10 +43,10 @@ from pathlib import Path
 
 import numpy as np
 
-from flux2_klein.checkpoint import download_bundle, resolve_huggingface_token, restore_component
-from flux2_klein.config import CheckpointSourceConfig, VaeDecoderConfig, VaeLayerConfig
-from flux2_klein.logging_setup import configure_logging
-from flux2_klein.vae import decode_latent
+from src.checkpoint import download_bundle, resolve_huggingface_token, restore_component
+from src.config import CheckpointSourceConfig, VaeDecoderConfig, VaeLayerConfig
+from src.utils import configure_logging
+from src.models import decode_latent
 
 
 REFERENCE_SOURCE_REPOSITORY = "https://github.com/black-forest-labs/flux2"
