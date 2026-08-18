@@ -100,6 +100,60 @@ STANDARD_RESOLUTION_BUCKETS: tuple[ResolutionBucket, ...] = (
 MAXIMUM_RECOMMENDED_IMAGE_TOKENS = 4300
 
 
+class NumericPrecision(enum.Enum):
+    """
+    Matrix-multiply and convolution precision, mapped onto JAX's three
+    precision levels.
+
+    On TPU, a float32 matmul or convolution is not executed in a single
+    native float32 operation; it is decomposed into multiple bfloat16
+    passes. The number of passes trades accuracy against speed:
+
+    DEFAULT: one pass. Fastest, lowest accuracy.
+    HIGH: three passes. Intermediate.
+    HIGHEST: six passes. Closest to true float32, slowest.
+
+    The reference FLUX.2 implementation decodes in float32, so HIGHEST
+    is the accuracy-matching default for the VAE. HIGH is offered
+    because the decoder is a single feed-forward pass with no iterative
+    error accumulation, so the reduced-pass variant may be visually
+    indistinguishable at meaningfully lower cost. That is a measurement
+    to be made against real weights, not an assumption to bake in, so
+    both remain selectable.
+    """
+
+    DEFAULT = "default"
+    HIGH = "high"
+    HIGHEST = "highest"
+
+    def to_jax_precision(self) -> "jax.lax.Precision":
+        import jax
+
+        return {
+            NumericPrecision.DEFAULT: jax.lax.Precision.DEFAULT,
+            NumericPrecision.HIGH: jax.lax.Precision.HIGH,
+            NumericPrecision.HIGHEST: jax.lax.Precision.HIGHEST,
+        }[self]
+
+
+@dataclass(frozen=True)
+class VaeLayerConfig:
+    """
+    Numerical parameters for the autoencoder decoder's layers.
+
+    These values are properties of the trained checkpoint, not free
+    choices: changing num_groups or normalization_epsilon would produce
+    different outputs from the same weights. They live here rather than
+    inline so that the single place they are defined is also the single
+    place they are documented.
+    """
+
+    num_groups: int = 32
+    normalization_epsilon: float = 1e-6
+    upsample_scale_factor: int = 2
+    precision: NumericPrecision = NumericPrecision.HIGHEST
+
+
 @dataclass(frozen=True)
 class CheckpointSourceConfig:
     """Where the converted JAX-native checkpoint bundle is downloaded from."""
