@@ -32,7 +32,8 @@ in its development.**
 | VAE residual and attention blocks | Done |
 | VAE full decoder assembly | Done |
 | VAE parity against the reference implementation | Done, 131 dB PSNR |
-| Text encoder (Qwen3-4B) | Not started |
+| Text encoder primitives (RMS norm, rotary embedding) | Done |
+| Text encoder attention, MLP, layer stack | Not started |
 | Diffusion transformer | Not started |
 | Sampling loop and pipeline | Not started |
 | Notebook runner, ipywidgets and Gradio interfaces | Not started |
@@ -91,7 +92,8 @@ src/
 │   └── parameters.py      flat-key access helpers
 ├── layers/            individual mathematical primitives
 │   ├── convolution.py
-│   ├── normalization.py
+│   ├── normalization.py     group norm and RMS norm
+│   ├── positional.py        rotary embedding
 │   ├── resampling.py
 │   └── activation.py
 ├── blocks/            composites assembled from primitives

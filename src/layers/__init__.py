@@ -19,12 +19,16 @@ Layout conventions, applied consistently throughout the package:
 
 from .activation import sigmoid_linear_unit
 from .convolution import convolution_2d
-from .normalization import group_normalization
+from .normalization import group_normalization, rms_normalization
+from .positional import apply_rotary_embedding, rotary_frequency_table
 from .resampling import nearest_neighbor_upsample_2d
 
 __all__ = [
+    "apply_rotary_embedding",
     "convolution_2d",
     "group_normalization",
     "nearest_neighbor_upsample_2d",
+    "rms_normalization",
+    "rotary_frequency_table",
     "sigmoid_linear_unit",
 ]

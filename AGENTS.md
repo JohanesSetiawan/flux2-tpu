@@ -167,7 +167,8 @@ src/
 │   └── parameters.py      flat-key access helpers
 ├── layers/            individual mathematical primitives
 │   ├── convolution.py
-│   ├── normalization.py
+│   ├── normalization.py     group norm and RMS norm
+│   ├── positional.py        rotary embedding
 │   ├── resampling.py
 │   └── activation.py
 ├── blocks/            composites assembled from primitives
@@ -273,6 +274,29 @@ v5e**; int8 is the only low precision with a real MXU speedup there.
 Each of these has already caused a real bug, or was caught only because
 it was specifically checked for.
 
+### Rotary pairing convention
+
+Qwen3 uses the half-split pairing: feature i is rotated against feature
+i + head_dim/2. The alternative interleaved convention pairs 2i with
+2i+1. Both are self-consistent and both produce correctly shaped
+output, so a shape check cannot tell them apart, and choosing wrong
+gives plausible but incorrect results. `_rotate_half` in
+`src/layers/positional.py` implements the half-split form, and
+`test_regression_rotary_uses_half_split_not_interleaved_pairing`
+asserts the distinction directly rather than through an oracle that
+might share the same assumption.
+
+Related: head_dim for this model is 128 while hidden_size is 2560, so
+head_dim is **not** hidden_size divided by head count. Code deriving it
+that way would be silently wrong.
+
+### RMS normalization is order-sensitive
+
+The reference computes the statistic in float32, casts the normalized
+value back to the input dtype, and only then multiplies by the learned
+scale. Multiplying before the cast changes the rounding. This is
+reproduced exactly in `rms_normalization`; do not "simplify" the order.
+
 ### Qwen3 padding and masking
 
 The single most dangerous area in the remaining work. The text encoder
@@ -377,6 +401,8 @@ Done:
 - VAE residual block and chunked attention block
 - Full VAE decoder, verified numerically against the reference
   PyTorch implementation at 131 dB PSNR on real weights
+- Text encoder configuration and primitives: RMS normalization and
+  rotary position embedding
 
 Remaining, in intended order. Each phase should be finished and tested
 before the next begins, rather than writing everything and debugging at
@@ -386,9 +412,10 @@ the end:
    are all complete. What remains is measuring decode cost at the
    target resolutions on actual TPU hardware, which cannot be done in
    a CPU sandbox.
-2. **Text encoder**: RMSNorm, RoPE, masking, GQA attention (32 query
-   heads, 8 key/value heads), SwiGLU MLP, single layer, 27-layer stack,
-   chat template and tokenization.
+2. **Text encoder**: masking, GQA attention (32 query heads, 8
+   key/value heads), SwiGLU MLP, single layer, 27-layer stack, chat
+   template and tokenization. RMS normalization and rotary embedding
+   are done.
 3. **Transformer**: 4-axis RoPE, QK-norm, modulation, double block,
    single block, full model under `debug_mode` (1+1 blocks, cheap CPU
    parity), full model unrolled, then `lax.scan` refactor validated as

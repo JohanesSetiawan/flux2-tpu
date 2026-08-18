@@ -78,3 +78,50 @@ def group_normalization(
     normalized = normalized.reshape(batch, height, width, channels).astype(input_dtype)
 
     return normalized * scale + shift
+
+
+def rms_normalization(
+    activations: jnp.ndarray,
+    scale: jnp.ndarray,
+    epsilon: float,
+) -> jnp.ndarray:
+    """
+    Normalize by the root mean square of the final axis, then apply a
+    learned per-feature scale.
+
+    Unlike group normalization this subtracts no mean: the vector is
+    divided by its own root mean square and nothing is re-centred. That
+    is what distinguishes RMS normalization from layer normalization,
+    and it is what the Qwen3 text encoder uses throughout.
+
+    The order of operations matters and is not interchangeable. The
+    reference implementation computes the statistic in float32, casts
+    the normalized value back to the input dtype, and only then
+    multiplies by the scale. Multiplying before the cast, or keeping the
+    product in float32, changes the rounding and produces small but
+    real differences from the reference. The sequence below reproduces
+    the reference exactly.
+
+    Parameters
+    ----------
+    activations:
+        Input with features on the final axis.
+    scale:
+        Per-feature multiplicative parameter, shape matching the final
+        axis of `activations`.
+    epsilon:
+        Added to the mean square before the reciprocal square root.
+        Supplied by the caller rather than read from a config object,
+        because this primitive is shared by components whose epsilons
+        differ.
+    """
+    input_dtype = activations.dtype
+    accumulation_dtype = jnp.promote_types(
+        input_dtype, MINIMUM_NORMALIZATION_ACCUMULATION_DTYPE
+    )
+
+    promoted = activations.astype(accumulation_dtype)
+    mean_square = jnp.mean(jnp.square(promoted), axis=-1, keepdims=True)
+    normalized = promoted * jax.lax.rsqrt(mean_square + epsilon)
+
+    return normalized.astype(input_dtype) * scale

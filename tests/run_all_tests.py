@@ -36,6 +36,7 @@ from tests.blocks.test_blocks import run_vae_block_tests
 from tests.checkpoint.test_hub import run_checkpoint_tests
 from tests.config.test_runtime import run_config_tests
 from tests.layers.test_primitives import run_layer_tests
+from tests.layers.test_text_encoder_primitives import run_text_encoder_primitive_tests
 from tests.models.test_vae import run_vae_tests
 
 
@@ -46,6 +47,7 @@ TEST_SUITES = (
     ("config", run_config_tests),
     ("checkpoint", run_checkpoint_tests),
     ("layers", run_layer_tests),
+    ("layers_text_encoder", run_text_encoder_primitive_tests),
     ("blocks", run_vae_block_tests),
     ("models", run_vae_tests),
 )

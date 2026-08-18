@@ -12,6 +12,7 @@ file within the package defines it.
 
 from .checkpoint import CheckpointSourceConfig, InferenceConfig
 from .precision import NumericPrecision
+from .text_encoder import TextEncoderConfig
 from .runtime import (
     MAXIMUM_RECOMMENDED_IMAGE_TOKENS,
     STANDARD_RESOLUTION_BUCKETS,
@@ -29,6 +30,7 @@ __all__ = [
     "NumericPrecision",
     "ResolutionBucket",
     "STANDARD_RESOLUTION_BUCKETS",
+    "TextEncoderConfig",
     "VaeDecoderConfig",
     "VaeLayerConfig",
     "resolve_residency_strategy",
