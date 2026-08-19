@@ -18,6 +18,12 @@ Layout conventions, applied consistently throughout the package:
 """
 
 from .activation import sigmoid_linear_unit
+from .axial_positional import (
+    apply_axial_rotation,
+    axial_rotation_table,
+    build_position_identifiers,
+)
+from .embedding import timestep_embedding
 from .convolution import convolution_2d
 from .masking import causal_padding_mask
 from .normalization import group_normalization, rms_normalization
@@ -25,7 +31,10 @@ from .positional import apply_rotary_embedding, rotary_frequency_table
 from .resampling import nearest_neighbor_upsample_2d
 
 __all__ = [
+    "apply_axial_rotation",
     "apply_rotary_embedding",
+    "axial_rotation_table",
+    "build_position_identifiers",
     "causal_padding_mask",
     "convolution_2d",
     "group_normalization",
@@ -33,4 +42,5 @@ __all__ = [
     "rms_normalization",
     "rotary_frequency_table",
     "sigmoid_linear_unit",
+    "timestep_embedding",
 ]

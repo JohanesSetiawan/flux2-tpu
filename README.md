@@ -33,7 +33,8 @@ in its development.**
 | VAE full decoder assembly | Done |
 | VAE parity against the reference implementation | Done, 131 dB PSNR |
 | Text encoder, complete | Done, parity within 3e-08 |
-| Diffusion transformer | Not started |
+| Transformer primitives (axial rope, timestep, modulation) | Done |
+| Transformer blocks and full model | Not started |
 | Sampling loop and pipeline | Not started |
 | Notebook runner, ipywidgets and Gradio interfaces | Not started |
 
@@ -92,7 +93,9 @@ src/
 ├── layers/            individual mathematical primitives
 │   ├── convolution.py
 │   ├── normalization.py     group norm and RMS norm
-│   ├── positional.py        rotary embedding
+│   ├── positional.py        rotary embedding, half-split pairing
+│   ├── axial_positional.py  rotary embedding, interleaved, multi-axis
+│   ├── embedding.py         sinusoidal timestep embedding
 │   ├── masking.py           causal and padding attention mask
 │   ├── resampling.py
 │   └── activation.py
@@ -101,6 +104,7 @@ src/
 │   ├── attention.py             autoencoder, single head, unmasked
 │   ├── grouped_query_attention.py   text encoder, masked, rotary
 │   ├── feedforward.py
+│   ├── modulation.py
 │   └── transformer_layer.py
 ├── models/            complete networks assembled from blocks
 │   ├── vae.py

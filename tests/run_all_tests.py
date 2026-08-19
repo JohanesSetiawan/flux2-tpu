@@ -39,6 +39,7 @@ from tests.config.test_runtime import run_config_tests
 from tests.layers.test_masking import run_masking_tests
 from tests.layers.test_primitives import run_layer_tests
 from tests.layers.test_text_encoder_primitives import run_text_encoder_primitive_tests
+from tests.layers.test_transformer_primitives import run_transformer_primitive_tests
 from tests.models.test_text_encoder import run_text_encoder_tests
 from tests.models.test_vae import run_vae_tests
 
@@ -52,6 +53,7 @@ TEST_SUITES = (
     ("layers", run_layer_tests),
     ("layers_text_encoder", run_text_encoder_primitive_tests),
     ("layers_masking", run_masking_tests),
+    ("layers_transformer", run_transformer_primitive_tests),
     ("blocks", run_vae_block_tests),
     ("blocks_text_encoder", run_text_encoder_block_tests),
     ("models_vae", run_vae_tests),

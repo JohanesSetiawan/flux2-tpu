@@ -168,7 +168,9 @@ src/
 ├── layers/            individual mathematical primitives
 │   ├── convolution.py
 │   ├── normalization.py     group norm and RMS norm
-│   ├── positional.py        rotary embedding
+│   ├── positional.py        rotary embedding, half-split pairing
+│   ├── axial_positional.py  rotary embedding, interleaved, multi-axis
+│   ├── embedding.py         sinusoidal timestep embedding
 │   ├── masking.py           causal and padding attention mask
 │   ├── resampling.py
 │   └── activation.py
@@ -177,6 +179,7 @@ src/
 │   ├── attention.py             autoencoder, single head, unmasked
 │   ├── grouped_query_attention.py   text encoder, masked, rotary
 │   ├── feedforward.py
+│   ├── modulation.py
 │   └── transformer_layer.py
 ├── models/            complete networks assembled from blocks
 │   ├── vae.py
@@ -281,7 +284,35 @@ v5e**; int8 is the only low precision with a real MXU speedup there.
 Each of these has already caused a real bug, or was caught only because
 it was specifically checked for.
 
-### Rotary pairing convention
+### There are two rotary conventions in this codebase, and they differ
+
+This is now the highest-risk confusion in the repository. Both models
+use rotary position embedding, under **incompatible pairing
+conventions**:
+
+| Model | Module | Pairing |
+|---|---|---|
+| Text encoder | `src/layers/positional.py` | half-split: feature i with i + head_dim/2 |
+| Diffusion transformer | `src/layers/axial_positional.py` | interleaved: feature 2i with 2i+1 |
+
+Do not merge these modules, and do not "simplify" one into the other.
+Both are self-consistent, both produce correctly shaped output, and
+each matches only its own checkpoint. Each has a dedicated test pinning
+its convention by placing a unit value at one feature and checking
+which index receives the rotated component.
+
+The transformer's version additionally carries four independent
+position axes, with the head dimension partitioned between them. A
+consequence that has already caused a test failure: a feature is
+rotated only by its own axis's position. Setting a position on axis 1
+leaves feature 0 untouched, because feature 0 lies in axis 0's slice.
+
+For text-to-image, text tokens carry their sequence index on the last
+axis and images carry row and column on the middle two, so the two
+groups never collide despite sharing one unmasked attention sequence.
+The first axis is unused in this mode.
+
+### Text encoder rotary pairing convention
 
 Qwen3 uses the half-split pairing: feature i is rotated against feature
 i + head_dim/2. The alternative interleaved convention pairs 2i with
@@ -437,6 +468,8 @@ Done:
 - Text encoder, complete: masking, grouped-query attention, gated
   feed-forward, layer stack and tokenization, verified against the
   reference transformers implementation across padding levels
+- Transformer primitives: multi-axis rotary embedding, sinusoidal
+  timestep embedding, and modulation, verified against the reference
 
 Remaining, in intended order. Each phase should be finished and tested
 before the next begins, rather than writing everything and debugging at

@@ -15,11 +15,19 @@ position embedding, and masking.
 from .attention import attention_block
 from .feedforward import gated_feedforward
 from .grouped_query_attention import grouped_query_attention
+from .modulation import (
+    ModulationTriple,
+    apply_modulated_normalization,
+    compute_modulation,
+)
 from .residual import residual_block
 from .transformer_layer import transformer_layer
 
 __all__ = [
+    "ModulationTriple",
+    "apply_modulated_normalization",
     "attention_block",
+    "compute_modulation",
     "gated_feedforward",
     "grouped_query_attention",
     "residual_block",
