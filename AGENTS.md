@@ -169,13 +169,20 @@ src/
 │   ├── convolution.py
 │   ├── normalization.py     group norm and RMS norm
 │   ├── positional.py        rotary embedding
+│   ├── masking.py           causal and padding attention mask
 │   ├── resampling.py
 │   └── activation.py
 ├── blocks/            composites assembled from primitives
 │   ├── residual.py
-│   └── attention.py
-└── models/            complete networks assembled from blocks
-    └── vae.py
+│   ├── attention.py             autoencoder, single head, unmasked
+│   ├── grouped_query_attention.py   text encoder, masked, rotary
+│   ├── feedforward.py
+│   └── transformer_layer.py
+├── models/            complete networks assembled from blocks
+│   ├── vae.py
+│   └── text_encoder.py
+└── tokenization/      prompt text to padded token identifiers
+    └── prompt.py
 
 tests/                 mirrors the source layout
 ├── run_all_tests.py       single entry point, writes a full log
@@ -359,6 +366,30 @@ has four levels of three blocks each, with levels 3, 2 and 1 carrying
 an upsample convolution and level 0 not, but that is an observation
 about the current checkpoint rather than a constant to encode.
 
+### Selecting a hidden state at the final layer measures the wrong thing
+
+The reference records hidden states before each layer and appends the
+final layer's output only after applying a final normalization. So the
+deepest hidden state of an N-layer model is normalized while every
+shallower one is not. The real configuration selects depth 27 from a
+36-layer model, which is not the last, so no normalization applies and
+this implementation correctly omits one.
+
+A parity test that selects a depth equal to its reference model's layer
+count compares against a normalized value and fails against correct
+code. An earlier version of the text encoder parity test did exactly
+that, and the resulting mismatch looked like a masking bug. Keep test
+depths strictly below the reference layer count.
+
+### Verify structure from metadata, not by restoring
+
+Checking that the checkpoint is shaped the way the code expects needs
+shapes and dtypes, not values. `component_metadata` reads those without
+materialising arrays. This is not merely an optimisation: the text
+encoder is nearly six gigabytes, so a structural check that restores it
+is killed outright on a machine with less memory, which is exactly what
+happened to the first version of the structure test.
+
 ### Precision levels are untestable on CPU
 
 `NumericPrecision` maps onto `jax.lax.Precision`, which decomposes a
@@ -386,6 +417,8 @@ encoder reach the same stage:
 |---|---|---|---|
 | VAE decoder | 16x16 square | 131.53 dB | 5.2e-06 |
 | VAE decoder | 12x20 non-square | 131.24 dB | 5.3e-06 |
+| Text encoder | no padding | n/a | 1.6e-08 |
+| Text encoder | 11 of 12 padded | n/a | 1.8e-08 |
 
 A square-only parity test cannot detect a height/width transposition,
 since both axes are the same length. Always include a non-square case.
@@ -401,8 +434,9 @@ Done:
 - VAE residual block and chunked attention block
 - Full VAE decoder, verified numerically against the reference
   PyTorch implementation at 131 dB PSNR on real weights
-- Text encoder configuration and primitives: RMS normalization and
-  rotary position embedding
+- Text encoder, complete: masking, grouped-query attention, gated
+  feed-forward, layer stack and tokenization, verified against the
+  reference transformers implementation across padding levels
 
 Remaining, in intended order. Each phase should be finished and tested
 before the next begins, rather than writing everything and debugging at
@@ -412,10 +446,8 @@ the end:
    are all complete. What remains is measuring decode cost at the
    target resolutions on actual TPU hardware, which cannot be done in
    a CPU sandbox.
-2. **Text encoder**: masking, GQA attention (32 query heads, 8
-   key/value heads), SwiGLU MLP, single layer, 27-layer stack, chat
-   template and tokenization. RMS normalization and rotary embedding
-   are done.
+2. **Text encoder**: done. What remains is measuring encode cost on
+   real hardware, which cannot be done in a CPU sandbox.
 3. **Transformer**: 4-axis RoPE, QK-norm, modulation, double block,
    single block, full model under `debug_mode` (1+1 blocks, cheap CPU
    parity), full model unrolled, then `lax.scan` refactor validated as

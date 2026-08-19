@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 
 from src.checkpoint import (
     VALID_COMPONENT_NAMES,
+    component_download_patterns,
     download_bundle,
     restore_component,
 )
@@ -73,11 +74,54 @@ def test_valid_component_names_matches_the_three_bundle_components() -> None:
     assert VALID_COMPONENT_NAMES == frozenset({"text_encoder", "transformer", "vae"})
 
 
+def test_regression_download_without_token_still_proceeds() -> None:
+    """
+    The bundle repository is public, so a missing token must not block
+    the download. It is passed through as None rather than triggering a
+    prompt or an error.
+    """
+    source_config = CheckpointSourceConfig(local_cache_directory=Path("/tmp/flux2_klein_test_cache"))
+    with patch("src.checkpoint.hub.snapshot_download") as mock_snapshot_download:
+        mock_snapshot_download.return_value = "/tmp/flux2_klein_test_cache"
+
+        download_bundle(source_config, _silent_logger(), token=None)
+
+        assert mock_snapshot_download.call_args.kwargs["token"] is None
+
+
+def test_regression_component_download_patterns_cover_only_requested_components() -> None:
+    """
+    Downloading a subset must still fetch the manifest and tokenizer,
+    which are small and always needed, while excluding the components
+    not asked for. The full bundle is roughly 13 GB, so work touching
+    one component should not pay for the other two.
+    """
+    patterns = component_download_patterns(["vae"])
+
+    assert any("vae" in pattern for pattern in patterns)
+    assert any("tokenizer" in pattern for pattern in patterns)
+    assert any("manifest" in pattern for pattern in patterns)
+    assert not any("transformer" in pattern for pattern in patterns)
+    assert not any("text_encoder" in pattern for pattern in patterns)
+
+
+def test_regression_component_download_patterns_reject_unknown_component() -> None:
+    try:
+        component_download_patterns(["not_a_component"])
+    except ValueError as error:
+        assert "not_a_component" in str(error)
+        return
+    raise AssertionError("Expected ValueError for an unknown component name")
+
+
 _CHECKPOINT_TESTS = [
     test_download_bundle_passes_repo_id_and_token_through,
     test_restore_component_builds_correct_path_and_restores,
     test_restore_component_rejects_unknown_component_name,
     test_valid_component_names_matches_the_three_bundle_components,
+    test_regression_download_without_token_still_proceeds,
+    test_regression_component_download_patterns_cover_only_requested_components,
+    test_regression_component_download_patterns_reject_unknown_component,
 ]
 
 

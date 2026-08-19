@@ -17,6 +17,7 @@ def rotary_frequency_table(
     sequence_length: int,
     head_dim: int,
     theta: float,
+    dtype: jnp.dtype = ROTARY_TABLE_DTYPE,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     Build the cosine and sine tables for rotary position embedding.
@@ -37,6 +38,13 @@ def rotary_frequency_table(
     across every layer and every sampling step rather than recomputing
     them.
 
+    The dtype defaults to float32, which is what the reference uses and
+    what inference runs at. It is a parameter rather than a constant so
+    that tests comparing against a float64 oracle can build the table at
+    matching precision; without that, a float32 table would put a floor
+    of roughly 1e-8 under any parity measurement and mask smaller real
+    differences.
+
     Returns
     -------
     A (cosine, sine) pair, each of shape (sequence_length, head_dim).
@@ -44,10 +52,10 @@ def rotary_frequency_table(
     if head_dim % 2 != 0:
         raise ValueError(f"Head dimension {head_dim} must be even to form rotation pairs")
 
-    pair_indices = jnp.arange(0, head_dim, 2, dtype=ROTARY_TABLE_DTYPE)
+    pair_indices = jnp.arange(0, head_dim, 2, dtype=dtype)
     inverse_frequencies = 1.0 / (theta ** (pair_indices / head_dim))
 
-    positions = jnp.arange(sequence_length, dtype=ROTARY_TABLE_DTYPE)
+    positions = jnp.arange(sequence_length, dtype=dtype)
     angles = jnp.outer(positions, inverse_frequencies)
 
     # Duplicate rather than interleave. See apply_rotary_embedding for

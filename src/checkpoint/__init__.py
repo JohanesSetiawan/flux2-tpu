@@ -23,7 +23,7 @@ from .parameters import (
     require_parameter,
     select_parameter_group,
 )
-from .restore import restore_component
+from .restore import component_metadata, restore_component
 
 __all__ = [
     "MANIFEST_FILE_NAME",
@@ -32,6 +32,7 @@ __all__ = [
     "TOKENIZER_SUBDIRECTORY_NAME",
     "VALID_COMPONENT_NAMES",
     "component_download_patterns",
+    "component_metadata",
     "download_bundle",
     "has_parameter_group",
     "require_parameter",

@@ -32,8 +32,7 @@ in its development.**
 | VAE residual and attention blocks | Done |
 | VAE full decoder assembly | Done |
 | VAE parity against the reference implementation | Done, 131 dB PSNR |
-| Text encoder primitives (RMS norm, rotary embedding) | Done |
-| Text encoder attention, MLP, layer stack | Not started |
+| Text encoder, complete | Done, parity within 3e-08 |
 | Diffusion transformer | Not started |
 | Sampling loop and pipeline | Not started |
 | Notebook runner, ipywidgets and Gradio interfaces | Not started |
@@ -94,13 +93,20 @@ src/
 │   ├── convolution.py
 │   ├── normalization.py     group norm and RMS norm
 │   ├── positional.py        rotary embedding
+│   ├── masking.py           causal and padding attention mask
 │   ├── resampling.py
 │   └── activation.py
 ├── blocks/            composites assembled from primitives
 │   ├── residual.py
-│   └── attention.py
-└── models/            complete networks assembled from blocks
-    └── vae.py
+│   ├── attention.py             autoencoder, single head, unmasked
+│   ├── grouped_query_attention.py   text encoder, masked, rotary
+│   ├── feedforward.py
+│   └── transformer_layer.py
+├── models/            complete networks assembled from blocks
+│   ├── vae.py
+│   └── text_encoder.py
+└── tokenization/      prompt text to padded token identifiers
+    └── prompt.py
 
 tests/                 mirrors the source layout
 ├── run_all_tests.py       single entry point, writes a full log
