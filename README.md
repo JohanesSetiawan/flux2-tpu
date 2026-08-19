@@ -35,6 +35,7 @@ in its development.**
 | Text encoder, complete | Done, parity within 3e-08 |
 | Diffusion transformer, complete | Done, parity within 3e-07 |
 | Sampling loop and generation pipeline | Done |
+| Execution layer: scan, fusion, residency, sharding, cache | Done |
 | Notebook runner, ipywidgets and Gradio interfaces | Not started |
 
 ## Design summary
@@ -115,8 +116,12 @@ src/
 │   └── transformer.py
 ├── sampling/          rectified-flow sampler
 │   ├── schedule.py        noise levels
-│   ├── euler.py           the integration loop
+│   ├── euler.py           the integration loop, stepped or fused
 │   └── latent.py          spatial and token forms
+├── execution/         placement and compilation, never semantics
+│   ├── residency.py       which components stay in accelerator memory
+│   ├── sharding.py        splitting parameters across devices
+│   └── compilation.py     persistent compilation cache
 ├── tokenization/      prompt text to padded token identifiers
 │   └── prompt.py
 └── pipeline.py        end-to-end generation, the only stateful module

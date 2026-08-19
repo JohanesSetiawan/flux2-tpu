@@ -191,8 +191,12 @@ src/
 │   └── transformer.py
 ├── sampling/          rectified-flow sampler
 │   ├── schedule.py        noise levels
-│   ├── euler.py           the integration loop
+│   ├── euler.py           the integration loop, stepped or fused
 │   └── latent.py          spatial and token forms
+├── execution/         placement and compilation, never semantics
+│   ├── residency.py       which components stay in accelerator memory
+│   ├── sharding.py        splitting parameters across devices
+│   └── compilation.py     persistent compilation cache
 ├── tokenization/      prompt text to padded token identifiers
 │   └── prompt.py
 └── pipeline.py        end-to-end generation, the only stateful module
@@ -457,6 +461,39 @@ the result matches explicit Euler exactly, and that refining the steps
 converges toward the analytic answer. The second is what catches a sign
 error, which would satisfy the first while integrating backwards.
 
+### Every execution option must be output-preserving, and is tested as such
+
+`src/execution` and the `ExecutionConfig` flags change how work is
+placed and compiled, never what is computed. That is asserted directly:
+a scanned block stack against an unrolled one, and a fused sampling
+loop against a stepped one. Anything that changed results would belong
+in a model configuration instead.
+
+Neither pair agrees bitwise, and the expected magnitudes differ for a
+reason worth knowing. Both models carry float32 rotary tables, so
+reordering operations around them amplifies float32 rounding and the
+gap lands near 1e-8. Rebuilding those tables in float64 drops it to
+about 1e-15, which is how the difference was confirmed as precision
+rather than logic. The sampling loop carries no such table, so its two
+paths agree to 1e-16.
+
+### Eviction only frees memory if the reference is dropped
+
+`evict_to_host` returns a new tree; the accelerator copy stays alive
+until the caller drops its reference to the old one. Holding both is
+the most common way this optimisation silently does nothing. The
+pipeline deletes its reference explicitly after each use for that
+reason.
+
+### Sharding is tested across simulated devices
+
+The execution suite sets `--xla_force_host_platform_device_count`
+before importing JAX, so sharding runs across several devices rather
+than the one a CPU really has. Testing it on a single device would
+exercise only the trivial path. The suite asserts the device count took
+effect, because a silent fallback to one device would make every
+sharding test vacuous.
+
 ### Precision levels are untestable on CPU
 
 `NumericPrecision` maps onto `jax.lax.Precision`, which decomposes a
@@ -513,6 +550,8 @@ Done:
 - Sampler and generation pipeline, complete: schedule, Euler
   integration, latent packing, prompt caching, and an end-to-end
   generation verified against real autoencoder weights
+- Execution layer, complete: scan over blocks, fused sampling loop,
+  residency planning, device sharding, persistent compilation cache
 
 Remaining, in intended order. Each phase should be finished and tested
 before the next begins, rather than writing everything and debugging at
@@ -531,9 +570,11 @@ the end:
 4. **Sampling**: done. What remains is an end-to-end parity run
    against the reference at a fixed seed, which needs the full-size
    checkpoint and therefore more memory than a CPU sandbox has.
-5. **Performance**: splash attention, scan tuning, mesh sharding for
-   Kaggle v5e-8. Deliberately last, so nothing is optimized before it is
-   known to be correct.
+5. **Performance**: done in structure, unmeasured in effect. Every
+   option is implemented and proven output-preserving, but none has
+   been benchmarked, because none of them does anything measurable on
+   CPU. Splash attention remains unimplemented and should wait for a
+   real measurement showing attention is the bottleneck.
 
 Notes for phase 1 and 5:
 

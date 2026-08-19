@@ -25,8 +25,11 @@ from __future__ import annotations
 
 from typing import Callable
 
+import jax
 import jax.numpy as jnp
 import numpy as np
+
+from ..config import ExecutionConfig
 
 
 # The reference accumulates the latent in bfloat16, the dtype the
@@ -42,6 +45,7 @@ def denoise_latent(
     sigma_schedule: np.ndarray,
     predict_velocity: VelocityPredictor,
     logger=None,
+    execution: ExecutionConfig | None = None,
 ) -> jnp.ndarray:
     """
     Integrate the velocity field from the first noise level to the last.
@@ -61,8 +65,13 @@ def denoise_latent(
         module independent of the transformer: the sampler does not
         need to know what produces the velocity, and tests can supply a
         known field with an analytically checkable solution.
+    execution:
+        Whether to fuse the steps into one compiled program. Fusing is
+        the default and gives up per-step logging, since a Python log
+        statement inside a compiled region runs once at trace time.
     logger:
-        Optional. Receives one line per step. Sampling is the outermost
+        Optional. Receives one line per step when the steps are not
+        fused, and a single summary line when they are. Sampling is the outermost
         loop of a generation, so progress here is the most useful thing
         to log; the numeric functions it calls deliberately log nothing.
 
@@ -76,8 +85,12 @@ def denoise_latent(
             f"got shape {sigma_schedule.shape}"
         )
 
+    execution = execution or ExecutionConfig()
     latent_tokens = initial_latent_tokens
     batch = latent_tokens.shape[0]
+
+    if execution.fuse_sampling_steps:
+        return _denoise_fused(latent_tokens, sigma_schedule, predict_velocity, logger)
 
     for step_index in range(sigma_schedule.shape[0] - 1):
         current_sigma = float(sigma_schedule[step_index])
@@ -103,3 +116,47 @@ def denoise_latent(
             )
 
     return latent_tokens
+
+
+def _denoise_fused(
+    initial_latent_tokens: jnp.ndarray,
+    sigma_schedule: np.ndarray,
+    predict_velocity: VelocityPredictor,
+    logger=None,
+) -> jnp.ndarray:
+    """
+    Run every step inside one compiled program.
+
+    The steps become a scan over adjacent pairs of noise levels, so the
+    compiler sees the whole trajectory at once: it can keep the latent
+    in place between steps rather than round-tripping it, and emits the
+    velocity computation once rather than once per step.
+
+    The levels are passed as traced values rather than baked in as
+    constants, which is what lets one compiled program serve any
+    schedule of the same length. Baking them in would recompile whenever
+    a resolution changed the schedule.
+
+    Per-step logging is not available here, for the same reason logging
+    is absent from every numeric function in this package: inside a
+    compiled region it would report tracing rather than execution.
+    """
+    current_levels = jnp.asarray(sigma_schedule[:-1], dtype=initial_latent_tokens.dtype)
+    next_levels = jnp.asarray(sigma_schedule[1:], dtype=initial_latent_tokens.dtype)
+    batch = initial_latent_tokens.shape[0]
+
+    if logger is not None:
+        logger.info(
+            "Running %d sampling steps as one fused program", current_levels.shape[0]
+        )
+
+    def take_one_step(latent_tokens, levels):
+        current_sigma, next_sigma = levels
+        timesteps = jnp.full((batch,), current_sigma, dtype=latent_tokens.dtype)
+        velocity = predict_velocity(latent_tokens, timesteps)
+        return latent_tokens + (next_sigma - current_sigma) * velocity, None
+
+    final_tokens, _ = jax.lax.scan(
+        take_one_step, initial_latent_tokens, (current_levels, next_levels)
+    )
+    return final_tokens

@@ -24,6 +24,7 @@ block.
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -35,7 +36,7 @@ from ..blocks.modulation import (
     compute_modulation,
 )
 from ..checkpoint import require_parameter, select_parameter_group
-from ..config import TransformerConfig
+from ..config import ExecutionConfig, TransformerConfig
 from ..layers import (
     axial_rotation_table,
     build_position_identifiers,
@@ -209,6 +210,95 @@ def _apply_final_layer(
     )
 
 
+def _run_double_blocks(
+    image_activations: jnp.ndarray,
+    text_activations: jnp.ndarray,
+    block_group: dict[str, np.ndarray],
+    cosine_table: jnp.ndarray,
+    sine_table: jnp.ndarray,
+    image_modulation,
+    text_modulation,
+    config: TransformerConfig,
+    execution: ExecutionConfig,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    Run every double-stream block, either through a scan or an unrolled
+    loop.
+
+    The two paths compute identical values. They differ only in how the
+    block body reaches the compiler: unrolled emits one copy per block,
+    scanned emits one copy total. The regression suite asserts their
+    agreement rather than assuming it.
+    """
+    if not execution.use_scan_over_blocks:
+        for block_index in range(config.num_double_blocks):
+            image_activations, text_activations = double_stream_block(
+                image_activations,
+                text_activations,
+                _block_parameters_at(block_group, block_index),
+                cosine_table,
+                sine_table,
+                image_modulation,
+                text_modulation,
+                config,
+            )
+        return image_activations, text_activations
+
+    def run_one_block(carry, block_parameters):
+        image, text = carry
+        image, text = double_stream_block(
+            image,
+            text,
+            block_parameters,
+            cosine_table,
+            sine_table,
+            image_modulation,
+            text_modulation,
+            config,
+        )
+        # Nothing is collected per block, so the second element is None.
+        return (image, text), None
+
+    (image_activations, text_activations), _ = jax.lax.scan(
+        run_one_block, (image_activations, text_activations), block_group
+    )
+    return image_activations, text_activations
+
+
+def _run_single_blocks(
+    activations: jnp.ndarray,
+    block_group: dict[str, np.ndarray],
+    cosine_table: jnp.ndarray,
+    sine_table: jnp.ndarray,
+    modulation: ModulationTriple,
+    config: TransformerConfig,
+    execution: ExecutionConfig,
+) -> jnp.ndarray:
+    """Run every single-stream block. See _run_double_blocks."""
+    if not execution.use_scan_over_blocks:
+        for block_index in range(config.num_single_blocks):
+            activations = single_stream_block(
+                activations,
+                _block_parameters_at(block_group, block_index),
+                cosine_table,
+                sine_table,
+                modulation,
+                config,
+            )
+        return activations
+
+    def run_one_block(carry, block_parameters):
+        return (
+            single_stream_block(
+                carry, block_parameters, cosine_table, sine_table, modulation, config
+            ),
+            None,
+        )
+
+    activations, _ = jax.lax.scan(run_one_block, activations, block_group)
+    return activations
+
+
 def predict_velocity(
     latent_tokens: jnp.ndarray,
     conditioning: jnp.ndarray,
@@ -217,6 +307,7 @@ def predict_velocity(
     latent_width: int,
     parameters: dict,
     config: TransformerConfig,
+    execution: ExecutionConfig | None = None,
 ) -> jnp.ndarray:
     """
     Predict the velocity field for one sampling step.
@@ -238,12 +329,16 @@ def predict_velocity(
         The restored transformer component.
     config:
         Architecture and precision settings.
+    execution:
+        How to run the block stacks. Defaults to the standard settings,
+        which use a scan.
 
     Returns
     -------
     Shape (batch, latent_height * latent_width, in_channels), matching
     the latent tokens.
     """
+    execution = execution or ExecutionConfig()
     global_parameters = parameters[GLOBAL_GROUP]
     double_blocks = parameters[DOUBLE_BLOCK_GROUP]
     single_blocks = parameters[SINGLE_BLOCK_GROUP]
@@ -283,30 +378,30 @@ def predict_velocity(
     position_identifiers = jnp.concatenate([text_identifiers, image_identifiers], axis=1)
     cosine_table, sine_table = axial_rotation_table(position_identifiers, config)
 
-    for block_index in range(config.num_double_blocks):
-        image_activations, text_activations = double_stream_block(
-            image_activations,
-            text_activations,
-            _block_parameters_at(double_blocks, block_index),
-            cosine_table,
-            sine_table,
-            image_modulation,
-            text_modulation,
-            config,
-        )
+    image_activations, text_activations = _run_double_blocks(
+        image_activations,
+        text_activations,
+        double_blocks,
+        cosine_table,
+        sine_table,
+        image_modulation,
+        text_modulation,
+        config,
+        execution,
+    )
 
     num_text_tokens = text_activations.shape[1]
     activations = jnp.concatenate([text_activations, image_activations], axis=1)
 
-    for block_index in range(config.num_single_blocks):
-        activations = single_stream_block(
-            activations,
-            _block_parameters_at(single_blocks, block_index),
-            cosine_table,
-            sine_table,
-            single_modulation,
-            config,
-        )
+    activations = _run_single_blocks(
+        activations,
+        single_blocks,
+        cosine_table,
+        sine_table,
+        single_modulation,
+        config,
+        execution,
+    )
 
     # Only the image positions carry the prediction; the text positions
     # were conditioning and are dropped here.

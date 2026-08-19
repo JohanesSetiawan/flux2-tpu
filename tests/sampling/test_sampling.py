@@ -23,7 +23,7 @@ import logging
 import jax.numpy as jnp
 import numpy as np
 
-from src.config import SamplingConfig
+from src.config import ExecutionConfig, SamplingConfig
 from src.pipeline import to_display_range
 from src.sampling import (
     compute_schedule_shift,
@@ -245,6 +245,13 @@ def test_regression_euler_calls_the_predictor_once_per_step() -> None:
     Four steps means four evaluations, not five. An off-by-one here
     would change the cost of every generation by a quarter and move the
     result off the distilled trajectory.
+
+    This pins the stepped path specifically, and says so by requesting
+    it rather than relying on a default. The check reads each step's
+    concrete noise level, which is only possible when the steps run in
+    Python; under the fused path the body is traced once and the levels
+    are traced values. The fused path's equivalent guarantee is checked
+    in the execution suite instead.
     """
     calls = []
 
@@ -253,7 +260,13 @@ def test_regression_euler_calls_the_predictor_once_per_step() -> None:
         return jnp.zeros_like(tokens)
 
     schedule = compute_sigma_schedule(4096, SamplingConfig(num_steps=4))
-    denoise_latent(jnp.zeros((1, 2, 3), dtype=jnp.float64), schedule, counting_predictor)
+    denoise_latent(
+        jnp.zeros((1, 2, 3), dtype=jnp.float64),
+        schedule,
+        counting_predictor,
+        None,
+        ExecutionConfig(fuse_sampling_steps=False),
+    )
 
     assert len(calls) == 4, f"expected four evaluations, got {len(calls)}"
     assert calls == [float(level) for level in schedule[:-1]], (

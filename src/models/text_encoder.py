@@ -15,7 +15,7 @@ import numpy as np
 
 from ..blocks import transformer_layer
 from ..checkpoint import require_parameter
-from ..config import TextEncoderConfig
+from ..config import ExecutionConfig, TextEncoderConfig
 from ..layers import causal_padding_mask, rotary_frequency_table
 
 
@@ -72,6 +72,7 @@ def encode_prompt(
     token_is_real: jnp.ndarray,
     parameters: dict,
     config: TextEncoderConfig,
+    execution: ExecutionConfig | None = None,
 ) -> jnp.ndarray:
     """
     Encode a tokenized prompt into the conditioning tensor consumed by
@@ -108,6 +109,7 @@ def encode_prompt(
     Conditioning of shape
     (batch, sequence_length, hidden_size * number_of_selected_layers).
     """
+    execution = execution or ExecutionConfig()
     batch, sequence_length = token_ids.shape
 
     stacked_layers = parameters[LAYER_GROUP]
@@ -127,25 +129,47 @@ def encode_prompt(
     activations = embed_tokens(token_ids, parameters, config)
 
     # Hidden state k is the value after k layers have run, so the
-    # embedding output is state zero. Recording states in a dictionary
-    # keyed by depth, rather than appending to a list, keeps the mapping
-    # from configured index to captured tensor explicit.
+    # embedding output is state zero.
     selected_states: dict[int, jnp.ndarray] = {}
     if 0 in config.hidden_states_output_layers:
         selected_states[0] = activations
 
-    for layer_index in range(config.num_layers_required):
-        activations = transformer_layer(
-            activations,
-            _layer_parameters_at(stacked_layers, layer_index),
-            rotary_cosine,
-            rotary_sine,
-            attention_bias,
-            config,
+    required_layers = config.num_layers_required
+    used_layers = {
+        key: value[:required_layers] for key, value in stacked_layers.items()
+    }
+
+    if execution.use_scan_over_blocks:
+        def run_one_layer(carry, layer_parameters):
+            output = transformer_layer(
+                carry, layer_parameters, rotary_cosine, rotary_sine, attention_bias, config
+            )
+            # Every layer's output is collected, because which depths
+            # are needed is a configuration choice and a scan cannot
+            # branch on it. The cost is one extra copy of the
+            # activations per layer, which is small beside the
+            # parameters themselves.
+            return output, output
+
+        activations, per_layer_outputs = jax.lax.scan(
+            run_one_layer, activations, used_layers
         )
-        depth = layer_index + 1
-        if depth in config.hidden_states_output_layers:
-            selected_states[depth] = activations
+        for depth in config.hidden_states_output_layers:
+            if depth > 0:
+                selected_states[depth] = per_layer_outputs[depth - 1]
+    else:
+        for layer_index in range(required_layers):
+            activations = transformer_layer(
+                activations,
+                _layer_parameters_at(stacked_layers, layer_index),
+                rotary_cosine,
+                rotary_sine,
+                attention_bias,
+                config,
+            )
+            depth = layer_index + 1
+            if depth in config.hidden_states_output_layers:
+                selected_states[depth] = activations
 
     missing_depths = set(config.hidden_states_output_layers) - set(selected_states)
     if missing_depths:

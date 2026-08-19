@@ -24,6 +24,7 @@ import numpy as np
 
 from .checkpoint import download_bundle, resolve_huggingface_token, restore_component
 from .config import (
+    ExecutionConfig,
     InferenceConfig,
     MemoryResidencyStrategy,
     ResolutionBucket,
@@ -32,6 +33,15 @@ from .config import (
     TransformerConfig,
     VaeDecoderConfig,
     resolve_residency_strategy,
+)
+from .execution import (
+    build_device_mesh,
+    configure_compilation_cache,
+    evict_to_host,
+    move_to_accelerator,
+    plan_component_residency,
+    replicate_parameters,
+    shard_stacked_blocks,
 )
 from .models import decode_latent, encode_prompt, predict_velocity
 from .sampling import (
@@ -89,6 +99,7 @@ class Pipeline:
         transformer_config: TransformerConfig | None = None,
         vae_config: VaeDecoderConfig | None = None,
         sampling_config: SamplingConfig | None = None,
+        execution_config: ExecutionConfig | None = None,
     ) -> None:
         self._config = config
         self._logger = logger
@@ -96,6 +107,7 @@ class Pipeline:
         self._transformer_config = transformer_config or TransformerConfig()
         self._vae_config = vae_config or VaeDecoderConfig()
         self._sampling_config = sampling_config or SamplingConfig()
+        self._execution_config = execution_config or ExecutionConfig()
 
         self._residency = resolve_residency_strategy(
             config.residency_strategy, jax.device_count()
@@ -105,6 +117,16 @@ class Pipeline:
             self._residency.value,
             jax.device_count(),
         )
+
+        self._residency_plan = plan_component_residency(
+            self._residency, ("text_encoder", "transformer", "vae")
+        )
+        for entry in self._residency_plan:
+            logger.info(
+                "  %s: %s",
+                entry.component_name,
+                "resident" if entry.resident else "held on host, moved in when used",
+            )
 
         self._bundle_path: Path | None = None
         self._text_encoder_parameters: dict | None = None
@@ -142,7 +164,34 @@ class Pipeline:
         )
         self._vae_parameters = restore_component(self._bundle_path, "vae", self._logger)
 
+        configure_compilation_cache(self._execution_config, self._logger)
+
+        mesh = build_device_mesh(self._logger)
+        # Block stacks are the only parameters large enough to be worth
+        # splitting; everything else is replicated, which needs no
+        # collectives and costs little at these sizes.
+        self._transformer_parameters = {
+            group_name: (
+                shard_stacked_blocks(group, mesh, self._logger)
+                if group_name in ("double_blocks", "single_blocks")
+                else replicate_parameters(group, mesh)
+            )
+            for group_name, group in self._transformer_parameters.items()
+        }
+
+        if not self._text_encoder_is_resident():
+            self._text_encoder_parameters = evict_to_host(
+                self._text_encoder_parameters, self._logger, "text_encoder"
+            )
+
         self._logger.info("All components loaded")
+
+    def _text_encoder_is_resident(self) -> bool:
+        return next(
+            entry.resident
+            for entry in self._residency_plan
+            if entry.component_name == "text_encoder"
+        )
 
     def _require_loaded(self) -> None:
         if self._transformer_parameters is None:
@@ -166,12 +215,29 @@ class Pipeline:
             self._text_encoder_config.sequence_length,
             self._logger,
         )
+
+        # Under the swapped strategy the encoder lives on the host
+        # between prompts. It is moved in, used, and released here
+        # rather than being held, which is the whole point of evicting
+        # it: the conditioning it produces is kept instead, and that is
+        # a few megabytes against several gigabytes.
+        parameters = self._text_encoder_parameters
+        if not self._text_encoder_is_resident():
+            parameters = move_to_accelerator(parameters, self._logger, "text_encoder")
+
         conditioning = encode_prompt(
             jnp.asarray(tokenized.token_ids),
             jnp.asarray(tokenized.token_is_real),
-            self._text_encoder_parameters,
+            parameters,
             self._text_encoder_config,
+            self._execution_config,
         )
+        conditioning = jax.block_until_ready(conditioning)
+
+        if not self._text_encoder_is_resident():
+            # Dropping the reference is what actually frees the
+            # accelerator copy; without this the eviction saves nothing.
+            del parameters
 
         self._conditioning_cache[prompt] = conditioning
         return conditioning
@@ -233,10 +299,11 @@ class Pipeline:
                 latent_width,
                 self._transformer_parameters,
                 self._transformer_config,
+                self._execution_config,
             )
 
         denoised_tokens = denoise_latent(
-            latent_tokens, sigma_schedule, velocity_at, self._logger
+            latent_tokens, sigma_schedule, velocity_at, self._logger, self._execution_config
         )
 
         latent = unpack_tokens_to_latent(denoised_tokens, latent_height, latent_width)

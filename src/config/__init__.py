@@ -11,6 +11,7 @@ file within the package defines it.
 """
 
 from .checkpoint import CheckpointSourceConfig, InferenceConfig
+from .execution import ExecutionConfig
 from .precision import NumericPrecision
 from .sampling import SamplingConfig
 from .text_encoder import TextEncoderConfig
@@ -26,6 +27,7 @@ from .vae import VaeDecoderConfig, VaeLayerConfig
 
 __all__ = [
     "CheckpointSourceConfig",
+    "ExecutionConfig",
     "InferenceConfig",
     "MAXIMUM_RECOMMENDED_IMAGE_TOKENS",
     "MemoryResidencyStrategy",
