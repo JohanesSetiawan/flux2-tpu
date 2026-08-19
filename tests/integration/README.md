@@ -35,4 +35,7 @@ python -m tests.integration.test_text_encoder_parity
 # Reads metadata only, so it does not need memory proportional to the
 # checkpoint size.
 python -m tests.integration.test_checkpoint_structure
+
+# Numerical parity of the diffusion transformer against the reference.
+python -m tests.integration.test_transformer_parity --reference-source-path /tmp/flux2
 ```

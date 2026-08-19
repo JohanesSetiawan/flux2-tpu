@@ -14,7 +14,11 @@ position embedding, and masking.
 
 from .attention import attention_block
 from .feedforward import gated_feedforward
+from .double_stream import double_stream_block
+from .gated_mlp import split_and_gate
 from .grouped_query_attention import grouped_query_attention
+from .joint_attention import joint_attention, normalize_and_rotate, split_fused_qkv
+from .single_stream import single_stream_block
 from .modulation import (
     ModulationTriple,
     apply_modulated_normalization,
@@ -28,6 +32,12 @@ __all__ = [
     "apply_modulated_normalization",
     "attention_block",
     "compute_modulation",
+    "double_stream_block",
+    "joint_attention",
+    "normalize_and_rotate",
+    "single_stream_block",
+    "split_and_gate",
+    "split_fused_qkv",
     "gated_feedforward",
     "grouped_query_attention",
     "residual_block",

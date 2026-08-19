@@ -125,3 +125,30 @@ def rms_normalization(
     normalized = promoted * jax.lax.rsqrt(mean_square + epsilon)
 
     return normalized.astype(input_dtype) * scale
+
+
+def layer_normalization(activations: jnp.ndarray, epsilon: float) -> jnp.ndarray:
+    """
+    Normalize the final axis to zero mean and unit variance, with no
+    learned parameters.
+
+    The diffusion transformer's normalizations carry no weight or bias
+    of their own: the scale and shift that would normally live here are
+    supplied per timestep by the modulation projections instead. That is
+    what makes the transform adaptive, and it is why this function takes
+    no parameters beyond an epsilon.
+
+    Unlike RMS normalization this does subtract the mean, so the two are
+    not interchangeable even though both act on the final axis.
+    """
+    input_dtype = activations.dtype
+    accumulation_dtype = jnp.promote_types(
+        input_dtype, MINIMUM_NORMALIZATION_ACCUMULATION_DTYPE
+    )
+
+    promoted = activations.astype(accumulation_dtype)
+    mean = jnp.mean(promoted, axis=-1, keepdims=True)
+    centred = promoted - mean
+    variance = jnp.mean(jnp.square(centred), axis=-1, keepdims=True)
+
+    return (centred * jax.lax.rsqrt(variance + epsilon)).astype(input_dtype)

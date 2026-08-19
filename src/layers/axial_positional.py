@@ -33,6 +33,13 @@ from ..config import TransformerConfig
 # positions.
 ROTATION_TABLE_DTYPE = jnp.float32
 
+# Positions are small non-negative integers, so 32 bits is ample. The
+# dtype is named rather than written inline so every array that holds
+# or is scattered into position identifiers agrees; a mismatch produces
+# an unsafe-cast warning from JAX rather than a hard failure, which is
+# easy to overlook.
+POSITION_IDENTIFIER_DTYPE = jnp.int32
+
 
 def _single_axis_rotation(
     positions: jnp.ndarray, axis_dim: int, theta: float
@@ -178,13 +185,17 @@ def build_position_identifiers(
     """
     num_axes = config.num_positional_axes
 
-    text_identifiers = jnp.zeros((1, text_length, num_axes), dtype=jnp.int32)
-    text_identifiers = text_identifiers.at[0, :, num_axes - 1].set(jnp.arange(text_length))
+    text_identifiers = jnp.zeros((1, text_length, num_axes), dtype=POSITION_IDENTIFIER_DTYPE)
+    text_identifiers = text_identifiers.at[0, :, num_axes - 1].set(
+        jnp.arange(text_length, dtype=POSITION_IDENTIFIER_DTYPE)
+    )
 
-    rows = jnp.repeat(jnp.arange(image_height), image_width)
-    columns = jnp.tile(jnp.arange(image_width), image_height)
+    rows = jnp.repeat(jnp.arange(image_height, dtype=POSITION_IDENTIFIER_DTYPE), image_width)
+    columns = jnp.tile(jnp.arange(image_width, dtype=POSITION_IDENTIFIER_DTYPE), image_height)
 
-    image_identifiers = jnp.zeros((1, image_height * image_width, num_axes), dtype=jnp.int32)
+    image_identifiers = jnp.zeros(
+        (1, image_height * image_width, num_axes), dtype=POSITION_IDENTIFIER_DTYPE
+    )
     image_identifiers = image_identifiers.at[0, :, 1].set(rows)
     image_identifiers = image_identifiers.at[0, :, 2].set(columns)
 

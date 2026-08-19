@@ -26,7 +26,7 @@ from .axial_positional import (
 from .embedding import timestep_embedding
 from .convolution import convolution_2d
 from .masking import causal_padding_mask
-from .normalization import group_normalization, rms_normalization
+from .normalization import group_normalization, layer_normalization, rms_normalization
 from .positional import apply_rotary_embedding, rotary_frequency_table
 from .resampling import nearest_neighbor_upsample_2d
 
@@ -38,6 +38,7 @@ __all__ = [
     "causal_padding_mask",
     "convolution_2d",
     "group_normalization",
+    "layer_normalization",
     "nearest_neighbor_upsample_2d",
     "rms_normalization",
     "rotary_frequency_table",

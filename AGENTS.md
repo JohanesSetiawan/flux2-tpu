@@ -178,12 +178,17 @@ src/
 │   ├── residual.py
 │   ├── attention.py             autoencoder, single head, unmasked
 │   ├── grouped_query_attention.py   text encoder, masked, rotary
+│   ├── joint_attention.py           transformer, multi-head, unmasked
 │   ├── feedforward.py
+│   ├── gated_mlp.py
 │   ├── modulation.py
+│   ├── double_stream.py
+│   ├── single_stream.py
 │   └── transformer_layer.py
 ├── models/            complete networks assembled from blocks
 │   ├── vae.py
-│   └── text_encoder.py
+│   ├── text_encoder.py
+│   └── transformer.py
 └── tokenization/      prompt text to padded token identifiers
     └── prompt.py
 
@@ -421,6 +426,28 @@ encoder is nearly six gigabytes, so a structural check that restores it
 is killed outright on a machine with less memory, which is exactly what
 happened to the first version of the structure test.
 
+### There are three attention implementations and none is interchangeable
+
+| Model | Module | Shape |
+|---|---|---|
+| Autoencoder | `blocks/attention.py` | single head, head dim equals channel count, unmasked, query-chunked |
+| Text encoder | `blocks/grouped_query_attention.py` | multi-head, fewer key/value heads, causal plus padding mask |
+| Transformer | `blocks/joint_attention.py` | multi-head, fully unmasked over concatenated text and image |
+
+The transformer's lack of any mask is deliberate and matches the
+reference: every token attends to every other, including the text
+encoder's padding positions. Adding a mask to "fix" that would diverge
+from the trained model.
+
+### Layer normalization hides constant perturbations
+
+A test that perturbs activations by adding the same constant to every
+feature will see no effect anywhere downstream of a layer
+normalization, because that operation subtracts the mean. This is not a
+bug and not a sign the value is unused. Perturb with non-uniform noise
+instead. One transformer test made this mistake and appeared to show
+that the text stream did not influence the image stream.
+
 ### Precision levels are untestable on CPU
 
 `NumericPrecision` maps onto `jax.lax.Precision`, which decomposes a
@@ -450,6 +477,8 @@ encoder reach the same stage:
 | VAE decoder | 12x20 non-square | 131.24 dB | 5.3e-06 |
 | Text encoder | no padding | n/a | 1.6e-08 |
 | Text encoder | 11 of 12 padded | n/a | 1.8e-08 |
+| Transformer | 3x4 latent, timestep 1.0 | n/a | 2.1e-07 |
+| Transformer | 4x4 latent, timestep 0.0 | n/a | 2.6e-09 |
 
 A square-only parity test cannot detect a height/width transposition,
 since both axes are the same length. Always include a non-square case.
@@ -468,8 +497,10 @@ Done:
 - Text encoder, complete: masking, grouped-query attention, gated
   feed-forward, layer stack and tokenization, verified against the
   reference transformers implementation across padding levels
-- Transformer primitives: multi-axis rotary embedding, sinusoidal
-  timestep embedding, and modulation, verified against the reference
+- Diffusion transformer, complete: multi-axis rotary, timestep
+  embedding, modulation, joint attention, both block types and the
+  full model, verified against the reference across latent shapes,
+  text lengths and timesteps
 
 Remaining, in intended order. Each phase should be finished and tested
 before the next begins, rather than writing everything and debugging at
@@ -481,10 +512,10 @@ the end:
    a CPU sandbox.
 2. **Text encoder**: done. What remains is measuring encode cost on
    real hardware, which cannot be done in a CPU sandbox.
-3. **Transformer**: 4-axis RoPE, QK-norm, modulation, double block,
-   single block, full model under `debug_mode` (1+1 blocks, cheap CPU
-   parity), full model unrolled, then `lax.scan` refactor validated as
-   producing identical output.
+3. **Transformer**: done, except the `lax.scan` refactor, which is a
+   performance change and belongs with phase 5. Blocks currently run
+   in a Python loop over the stacked parameter axis, which is correct
+   but compiles the block body once per block.
 4. **Sampling**: schedule, prompt-embedding cache, full pipeline,
    end-to-end parity at a fixed seed.
 5. **Performance**: splash attention, scan tuning, mesh sharding for

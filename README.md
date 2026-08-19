@@ -33,8 +33,7 @@ in its development.**
 | VAE full decoder assembly | Done |
 | VAE parity against the reference implementation | Done, 131 dB PSNR |
 | Text encoder, complete | Done, parity within 3e-08 |
-| Transformer primitives (axial rope, timestep, modulation) | Done |
-| Transformer blocks and full model | Not started |
+| Diffusion transformer, complete | Done, parity within 3e-07 |
 | Sampling loop and pipeline | Not started |
 | Notebook runner, ipywidgets and Gradio interfaces | Not started |
 
@@ -103,12 +102,17 @@ src/
 │   ├── residual.py
 │   ├── attention.py             autoencoder, single head, unmasked
 │   ├── grouped_query_attention.py   text encoder, masked, rotary
+│   ├── joint_attention.py           transformer, multi-head, unmasked
 │   ├── feedforward.py
+│   ├── gated_mlp.py
 │   ├── modulation.py
+│   ├── double_stream.py
+│   ├── single_stream.py
 │   └── transformer_layer.py
 ├── models/            complete networks assembled from blocks
 │   ├── vae.py
-│   └── text_encoder.py
+│   ├── text_encoder.py
+│   └── transformer.py
 └── tokenization/      prompt text to padded token identifiers
     └── prompt.py
 
