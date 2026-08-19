@@ -43,6 +43,7 @@ from tests.layers.test_transformer_primitives import run_transformer_primitive_t
 from tests.models.test_text_encoder import run_text_encoder_tests
 from tests.models.test_transformer import run_transformer_tests
 from tests.execution.test_execution import run_execution_tests
+from tests.interfaces.test_interfaces import run_interface_tests
 from tests.sampling.test_sampling import run_sampling_tests
 from tests.models.test_vae import run_vae_tests
 
@@ -64,6 +65,7 @@ TEST_SUITES = (
     ("models_transformer", run_transformer_tests),
     ("sampling", run_sampling_tests),
     ("execution", run_execution_tests),
+    ("interfaces", run_interface_tests),
 )
 
 

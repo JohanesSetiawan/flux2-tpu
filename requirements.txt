@@ -6,3 +6,9 @@ numpy
 # Only used for its tokenizer loader; does not require a torch backend
 # for tokenization.
 transformers
+
+# Optional, for the interactive front ends only. The pipeline itself
+# does not need them.
+# ipywidgets
+# gradio
+# pillow

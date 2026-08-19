@@ -66,6 +66,12 @@ PACKED_LATENT_CHANNELS = 128
 DECODER_OUTPUT_MINIMUM = -1.0
 DECODER_OUTPUT_MAXIMUM = 1.0
 
+# Used only to trigger compilation. Content is irrelevant, since
+# compilation depends on shapes rather than values, but it must be
+# non-empty to take the same path a real request does.
+WARM_UP_PROMPT = "warm up"
+WARM_UP_SEED = 0
+
 
 @dataclass(frozen=True)
 class GenerationRequest:
@@ -140,6 +146,11 @@ class Pipeline:
         # also avoids a host transfer, which is the dominant cost of a
         # repeat generation.
         self._conditioning_cache: dict[str, jnp.ndarray] = {}
+
+    @property
+    def resolution_buckets(self) -> tuple[ResolutionBucket, ...]:
+        """The resolutions this pipeline will accept, in offer order."""
+        return self._config.resolution_buckets
 
     def load(self) -> None:
         """
@@ -259,6 +270,43 @@ class Pipeline:
             key, (1, latent_height, latent_width, PACKED_LATENT_CHANNELS)
         )
         return noise, latent_height, latent_width
+
+    def warm_up(
+        self, buckets: tuple[ResolutionBucket, ...] | None = None
+    ) -> None:
+        """
+        Compile the generation program for each supported resolution.
+
+        Compilation is per shape, not per prompt, so one generation at a
+        given resolution pays for every later generation at that
+        resolution. Doing it up front rather than on the first real
+        request is the difference between a person waiting once at
+        startup and waiting the first time they ask for something.
+
+        A short throwaway prompt is used and its result discarded. The
+        prompt content is irrelevant to what gets compiled, since only
+        shapes matter, but it must be non-empty to exercise the same
+        path a real request takes.
+
+        Note that the conditioning cache is left populated with the
+        warm-up prompt afterwards. That is harmless: it is a few
+        megabytes, and a real prompt will simply miss the cache and
+        encode normally.
+        """
+        self._require_loaded()
+        buckets = buckets or self._config.resolution_buckets
+
+        for bucket in buckets:
+            self._logger.info("Warming up %s", bucket.label)
+            request = GenerationRequest(
+                prompt=WARM_UP_PROMPT, resolution=bucket, seed=WARM_UP_SEED
+            )
+            # generate returns a materialised numpy array, so the
+            # computation is already forced by the time it returns. The
+            # result is discarded: only the compiled program is wanted.
+            self.generate(request)
+
+        self._logger.info("Warm-up complete for %d resolution(s)", len(buckets))
 
     def generate(self, request: GenerationRequest) -> np.ndarray:
         """

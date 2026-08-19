@@ -199,7 +199,14 @@ src/
 │   └── compilation.py     persistent compilation cache
 ├── tokenization/      prompt text to padded token identifiers
 │   └── prompt.py
+├── interfaces/        front ends, wiring only
+│   ├── session.py         input handling both front ends share
+│   ├── widgets.py         in-notebook controls
+│   └── browser.py         Gradio interface
 └── pipeline.py        end-to-end generation, the only stateful module
+
+notebooks/
+└── generate.ipynb     runner; contains no logic, only calls into src
 ```
 
 Dependencies run strictly downward through that list: a layer may
@@ -494,6 +501,19 @@ exercise only the trivial path. The suite asserts the device count took
 effect, because a silent fallback to one device would make every
 sharding test vacuous.
 
+### Interfaces hold no logic, and that is enforced by where the tests are
+
+`src/interfaces/session.py` holds every decision the front ends make:
+resolving a label to a bucket, resolving a seed, building a request,
+converting an image. The widget and Gradio modules are wiring. That
+split exists so the behaviour is testable without clicking anything,
+and the interface suite tests `session` thoroughly while asserting only
+one thing about the front ends themselves: that importing them does not
+require their optional toolkit.
+
+If a front end starts making decisions, move them to `session` rather
+than testing the front end.
+
 ### Precision levels are untestable on CPU
 
 `NumericPrecision` maps onto `jax.lax.Precision`, which decomposes a
@@ -552,10 +572,19 @@ Done:
   generation verified against real autoencoder weights
 - Execution layer, complete: scan over blocks, fused sampling loop,
   residency planning, device sharding, persistent compilation cache
+- Interfaces, complete: shared input handling, in-notebook controls,
+  a Gradio front end, and a notebook runner containing no logic
 
-Remaining, in intended order. Each phase should be finished and tested
-before the next begins, rather than writing everything and debugging at
-the end:
+Every phase below is now complete. What remains is not a phase but a
+dependency: **none of this has run on TPU**. Every performance claim in
+this repository is arithmetic, and the execution layer's options are
+proven output-preserving but entirely unmeasured. The first real run
+should establish a baseline before anything further is optimized.
+
+Splash attention is deliberately unimplemented for that reason: it
+should wait for a measurement showing attention is the bottleneck.
+
+For reference, the order the work was done in:
 
 1. **VAE**: done. Assembly, real-weight execution and reference parity
    are all complete. What remains is measuring decode cost at the

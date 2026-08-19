@@ -16,12 +16,20 @@ prompt/output filtering of any kind. The reference FLUX.2 pipeline's
 moderation layer was intentionally not ported. Anyone using this
 codebase is solely responsible for how they use it.
 
+## Quick start
+
+Open `notebooks/generate.ipynb` in Kaggle or Colab with a TPU
+accelerator selected, and run it top to bottom. It clones this
+repository, downloads the weights, warms up the compiler, and offers
+three ways to generate: in-notebook controls, a browser interface, or a
+direct call.
+
 ## Status
 
-Under active development, built incrementally with tests at each step
-rather than as one large unverified drop. **There is no working
-`generate()` yet; this repository cannot produce images at this point
-in its development.**
+Every component is implemented and verified against the reference. What
+has **not** been established is performance: none of it has run on real
+TPU hardware, so every latency and memory figure in this project is
+arithmetic rather than measurement.
 
 | Component | Status |
 |---|---|
@@ -36,7 +44,7 @@ in its development.**
 | Diffusion transformer, complete | Done, parity within 3e-07 |
 | Sampling loop and generation pipeline | Done |
 | Execution layer: scan, fusion, residency, sharding, cache | Done |
-| Notebook runner, ipywidgets and Gradio interfaces | Not started |
+| Notebook runner, ipywidgets and Gradio interfaces | Done |
 
 ## Design summary
 
@@ -124,7 +132,14 @@ src/
 │   └── compilation.py     persistent compilation cache
 ├── tokenization/      prompt text to padded token identifiers
 │   └── prompt.py
+├── interfaces/        front ends, wiring only
+│   ├── session.py         input handling both front ends share
+│   ├── widgets.py         in-notebook controls
+│   └── browser.py         Gradio interface
 └── pipeline.py        end-to-end generation, the only stateful module
+
+notebooks/
+└── generate.ipynb     runner; contains no logic, only calls into src
 ```
 
 Dependencies run strictly downward through that list: a layer may
