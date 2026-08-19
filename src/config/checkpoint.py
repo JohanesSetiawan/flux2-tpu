@@ -34,6 +34,19 @@ class InferenceConfig:
     """Top-level container bundling every configuration group together."""
 
     checkpoint_source: CheckpointSourceConfig = field(default_factory=CheckpointSourceConfig)
+
+    # Dtype the initial noise is drawn in, which then governs the whole
+    # sampling and transformer forward pass.
+    #
+    # The reference draws bfloat16, matching the dtype its weights carry,
+    # and this follows it. Drawing float32 instead would not merely cost
+    # speed: it would leave the latent in a different dtype from the
+    # conditioning, and the resulting promotion partway through a block
+    # makes the scanned block stack fail to compile.
+    #
+    # Held as a name rather than a dtype object so the configuration
+    # stays a plain, serialisable dataclass.
+    latent_dtype_name: str = "bfloat16"
     residency_strategy: MemoryResidencyStrategy = MemoryResidencyStrategy.AUTO
     resolution_buckets: tuple[ResolutionBucket, ...] = STANDARD_RESOLUTION_BUCKETS
     log_file_path: Path = field(

@@ -356,18 +356,33 @@ def predict_velocity(
 
     precision = config.precision.to_jax_precision()
 
+    # One dtype governs the whole forward pass, taken from the latent
+    # because that is what the caller is integrating and what the
+    # velocity must be added to.
+    #
+    # Deriving it and casting at every entry point is not defensive
+    # clutter. The image stream, the text stream and the modulation
+    # vectors arrive from three different sources, and mixing their
+    # dtypes promotes the residual stream partway through a block. Under
+    # a scan that is fatal rather than merely slower: the carry's input
+    # and output dtypes must match exactly, so a promotion anywhere
+    # inside the block body stops the program from compiling at all.
+    compute_dtype = latent_tokens.dtype
+
     image_activations = jnp.matmul(
         latent_tokens,
         require_parameter(global_parameters, LATENT_PROJECTION_KEY, "predict_velocity"),
         precision=precision,
-    )
+    ).astype(compute_dtype)
     text_activations = jnp.matmul(
-        conditioning,
+        conditioning.astype(compute_dtype),
         require_parameter(global_parameters, CONDITIONING_PROJECTION_KEY, "predict_velocity"),
         precision=precision,
-    )
+    ).astype(compute_dtype)
 
-    conditioning_vector = compute_conditioning_vector(timesteps, global_parameters, config)
+    conditioning_vector = compute_conditioning_vector(
+        timesteps.astype(compute_dtype), global_parameters, config
+    ).astype(compute_dtype)
     image_modulation, text_modulation, single_modulation = compute_all_modulation(
         conditioning_vector, global_parameters, config
     )

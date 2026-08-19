@@ -328,7 +328,30 @@ def test_regression_zero_modulation_leaves_normalization_unchanged() -> None:
     assert np.allclose(output, np.asarray(normalized), atol=NUMERICAL_TOLERANCE)
 
 
+def test_regression_timestep_embedding_returns_the_input_dtype() -> None:
+    """
+    The embedding must come back in the dtype it was given, matching the
+    reference, which ends with a cast to its input.
+
+    This is the head of the chain that produces every modulation vector,
+    so returning float32 regardless of input promotes the modulation,
+    then the activations it scales, then the residual stream. Under a
+    scan that is a compile failure rather than a slow path.
+    """
+    config = TransformerConfig()
+
+    for dtype in (jnp.float32, jnp.bfloat16, jnp.float16):
+        timesteps = jnp.asarray(np.array([0.5, 1.0]), dtype=dtype)
+        embedded = timestep_embedding(timesteps, config)
+
+        assert embedded.dtype == dtype, (
+            f"gave {dtype} and got {embedded.dtype} back; the frequencies are built "
+            f"in float32 for precision but the result must be cast back"
+        )
+
+
 _TRANSFORMER_PRIMITIVE_TESTS = [
+    test_regression_timestep_embedding_returns_the_input_dtype,
     test_smoke_axial_rotation_table_has_broadcastable_head_axis,
     test_regression_axial_rotation_table_rejects_axis_count_mismatch,
     test_regression_axial_rotation_uses_interleaved_not_half_split_pairing,

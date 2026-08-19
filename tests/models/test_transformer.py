@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -34,7 +35,7 @@ from src.blocks import (
     split_and_gate,
     split_fused_qkv,
 )
-from src.config import NumericPrecision, TransformerConfig
+from src.config import ExecutionConfig, NumericPrecision, TransformerConfig
 from src.layers import axial_rotation_table, build_position_identifiers, layer_normalization
 from src.models.transformer import (
     BlockCountMismatchError,
@@ -463,7 +464,80 @@ def test_regression_modulation_is_computed_once_for_all_blocks() -> None:
     )
 
 
+def test_regression_forward_pass_preserves_a_single_dtype() -> None:
+    """
+    The whole forward pass must stay in the latent's dtype.
+
+    This is the bug the first TPU run hit, and it is worth stating
+    precisely because it is invisible on CPU with float64 test
+    parameters. The timestep embedding was built in float32 regardless
+    of its input, so with bfloat16 weights the modulation vectors came
+    out float32, promoted the activations they scaled, and left the
+    text stream entering a block as bfloat16 and leaving it as float32.
+    A Python loop tolerates that; a scan does not, because its carry
+    input and output dtypes must match exactly, so the program failed to
+    compile at all.
+
+    Running at bfloat16 with bfloat16 parameters is what reproduces it,
+    since float64 everywhere hides the promotion.
+    """
+    rng = _random_generator(seed=20)
+    config = _TEST_CONFIG
+    parameters = jax.tree_util.tree_map(
+        lambda array: array.astype(jnp.bfloat16),
+        make_transformer_parameters(rng, config),
+    )
+
+    latent = jnp.zeros(
+        (1, TEST_LATENT_HEIGHT * TEST_LATENT_WIDTH, config.in_channels), dtype=jnp.bfloat16
+    )
+    conditioning = jnp.zeros((1, TEST_TEXT_TOKENS, config.context_dim), dtype=jnp.bfloat16)
+    timesteps = jnp.asarray(np.array([0.7672]), dtype=jnp.bfloat16)
+
+    for use_scan in (True, False):
+        velocity = predict_velocity(
+            latent, conditioning, timesteps, TEST_LATENT_HEIGHT, TEST_LATENT_WIDTH,
+            parameters, config, ExecutionConfig(use_scan_over_blocks=use_scan),
+        )
+        assert velocity.dtype == jnp.bfloat16, (
+            f"velocity came back as {velocity.dtype} rather than bfloat16 with "
+            f"use_scan_over_blocks={use_scan}; something in the forward pass promoted"
+        )
+
+
+def test_regression_mixed_input_dtypes_do_not_break_the_scan() -> None:
+    """
+    A caller mixing dtypes must not make the scan fail to compile. The
+    latent decides, and everything else is cast to it on the way in.
+    """
+    rng = _random_generator(seed=21)
+    config = _TEST_CONFIG
+    parameters = jax.tree_util.tree_map(
+        lambda array: array.astype(jnp.bfloat16),
+        make_transformer_parameters(rng, config),
+    )
+
+    latent = jnp.zeros(
+        (1, TEST_LATENT_HEIGHT * TEST_LATENT_WIDTH, config.in_channels), dtype=jnp.bfloat16
+    )
+    # Deliberately float32 conditioning against a bfloat16 latent.
+    conditioning = jnp.zeros((1, TEST_TEXT_TOKENS, config.context_dim), dtype=jnp.float32)
+    timesteps = jnp.asarray(np.array([0.5]), dtype=jnp.float32)
+
+    velocity = predict_velocity(
+        latent, conditioning, timesteps, TEST_LATENT_HEIGHT, TEST_LATENT_WIDTH,
+        parameters, config, ExecutionConfig(use_scan_over_blocks=True),
+    )
+
+    assert velocity.dtype == jnp.bfloat16, (
+        "the latent's dtype should govern the forward pass regardless of what the "
+        "conditioning and timesteps arrive as"
+    )
+
+
 _TRANSFORMER_TESTS = [
+    test_regression_forward_pass_preserves_a_single_dtype,
+    test_regression_mixed_input_dtypes_do_not_break_the_scan,
     test_regression_fused_qkv_splits_component_major_not_head_major,
     test_regression_gated_mlp_gates_first_half_with_second,
     test_smoke_joint_attention_merges_heads,

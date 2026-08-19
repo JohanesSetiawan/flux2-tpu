@@ -267,7 +267,9 @@ class Pipeline:
 
         key = jax.random.key(seed)
         noise = jax.random.normal(
-            key, (1, latent_height, latent_width, PACKED_LATENT_CHANNELS)
+            key,
+            (1, latent_height, latent_width, PACKED_LATENT_CHANNELS),
+            dtype=jnp.dtype(self._config.latent_dtype_name),
         )
         return noise, latent_height, latent_width
 

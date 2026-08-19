@@ -514,6 +514,38 @@ require their optional toolkit.
 If a front end starts making decisions, move them to `session` rather
 than testing the front end.
 
+### One dtype must govern the whole transformer forward pass
+
+Found on the first real TPU run, and invisible before it. The timestep
+embedding was built in float32 regardless of its input, so against
+bfloat16 weights the modulation vectors came out float32, promoted the
+activations they scaled, and left the text stream entering a block as
+bfloat16 and leaving it float32.
+
+A Python loop tolerates that silently. A scan does not: its carry input
+and output dtypes must match exactly, so the program failed to compile
+with a carry type error rather than running slowly.
+
+Two things now prevent it. `timestep_embedding` returns its input's
+dtype, matching the reference, which ends with a cast to `t`. And
+`predict_velocity` derives a single compute dtype from the latent and
+casts every entry point to it, so mixed inputs cannot promote the
+residual stream partway through a block.
+
+This class of bug cannot be caught by float64 tests, because float64
+everywhere hides the promotion. The regression tests for it run at
+bfloat16 deliberately.
+
+### Notebook bootstrap must survive a kernel restart
+
+A restart resets the working directory and clears `sys.path`, so a cell
+that only ran `%cd` during the first pass leaves `src` unimportable
+afterwards, and the apparent fix is to restart the whole session and
+re-download everything. The bootstrap cell is therefore idempotent:
+clone only if missing, always set both the directory and the import
+path, and import `src` immediately so a failure surfaces there rather
+than three cells later.
+
 ### Precision levels are untestable on CPU
 
 `NumericPrecision` maps onto `jax.lax.Precision`, which decomposes a

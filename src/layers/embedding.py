@@ -32,6 +32,15 @@ def timestep_embedding(
     specific arrangement, so reversing it would feed the trained weights
     a permuted input.
 
+    The result is returned in the dtype of `timesteps`, not in the dtype
+    the frequencies were built with. The reference does the same, and it
+    matters more than it looks: this embedding is the head of the chain
+    that produces every modulation vector, so a float32 result here
+    silently promotes the modulation, then the activations it scales,
+    and finally the whole residual stream. Under a scan that shows up as
+    a carry whose input is bfloat16 and whose output is float32, which
+    is a hard error rather than a slow path.
+
     Parameters
     ----------
     timesteps:
@@ -55,4 +64,6 @@ def timestep_embedding(
     frequencies = jnp.exp(-jnp.log(config.timestep_max_period) * exponents)
 
     angles = scaled[:, None] * frequencies[None, :]
-    return jnp.concatenate([jnp.cos(angles), jnp.sin(angles)], axis=-1)
+    embedded = jnp.concatenate([jnp.cos(angles), jnp.sin(angles)], axis=-1)
+
+    return embedded.astype(timesteps.dtype)
