@@ -42,6 +42,7 @@ from tests.layers.test_text_encoder_primitives import run_text_encoder_primitive
 from tests.layers.test_transformer_primitives import run_transformer_primitive_tests
 from tests.models.test_text_encoder import run_text_encoder_tests
 from tests.models.test_transformer import run_transformer_tests
+from tests.sampling.test_sampling import run_sampling_tests
 from tests.models.test_vae import run_vae_tests
 
 
@@ -60,6 +61,7 @@ TEST_SUITES = (
     ("models_vae", run_vae_tests),
     ("models_text_encoder", run_text_encoder_tests),
     ("models_transformer", run_transformer_tests),
+    ("sampling", run_sampling_tests),
 )
 
 

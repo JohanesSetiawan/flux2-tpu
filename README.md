@@ -34,7 +34,7 @@ in its development.**
 | VAE parity against the reference implementation | Done, 131 dB PSNR |
 | Text encoder, complete | Done, parity within 3e-08 |
 | Diffusion transformer, complete | Done, parity within 3e-07 |
-| Sampling loop and pipeline | Not started |
+| Sampling loop and generation pipeline | Done |
 | Notebook runner, ipywidgets and Gradio interfaces | Not started |
 
 ## Design summary
@@ -113,13 +113,13 @@ src/
 │   ├── vae.py
 │   ├── text_encoder.py
 │   └── transformer.py
-└── tokenization/      prompt text to padded token identifiers
-    └── prompt.py
-
-tests/                 mirrors the source layout
-├── run_all_tests.py       single entry point, writes a full log
-├── config/ layers/ blocks/ models/ checkpoint/
-└── integration/           needs network and PyTorch, run explicitly
+├── sampling/          rectified-flow sampler
+│   ├── schedule.py        noise levels
+│   ├── euler.py           the integration loop
+│   └── latent.py          spatial and token forms
+├── tokenization/      prompt text to padded token identifiers
+│   └── prompt.py
+└── pipeline.py        end-to-end generation, the only stateful module
 ```
 
 Dependencies run strictly downward through that list: a layer may

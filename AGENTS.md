@@ -189,13 +189,13 @@ src/
 │   ├── vae.py
 │   ├── text_encoder.py
 │   └── transformer.py
-└── tokenization/      prompt text to padded token identifiers
-    └── prompt.py
-
-tests/                 mirrors the source layout
-├── run_all_tests.py       single entry point, writes a full log
-├── config/ layers/ blocks/ models/ checkpoint/
-└── integration/           needs network and PyTorch, run explicitly
+├── sampling/          rectified-flow sampler
+│   ├── schedule.py        noise levels
+│   ├── euler.py           the integration loop
+│   └── latent.py          spatial and token forms
+├── tokenization/      prompt text to padded token identifiers
+│   └── prompt.py
+└── pipeline.py        end-to-end generation, the only stateful module
 ```
 
 Dependencies run strictly downward through that list: a layer may
@@ -448,6 +448,15 @@ bug and not a sign the value is unused. Perturb with non-uniform noise
 instead. One transformer test made this mistake and appeared to show
 that the text stream did not influence the image stream.
 
+### The sampler is verified against an analytic solution, not an oracle
+
+`test_regression_euler_integrates_a_known_field_correctly` feeds the
+integrator a velocity field whose exact solution is known, rather than
+comparing against another implementation. It asserts two things: that
+the result matches explicit Euler exactly, and that refining the steps
+converges toward the analytic answer. The second is what catches a sign
+error, which would satisfy the first while integrating backwards.
+
 ### Precision levels are untestable on CPU
 
 `NumericPrecision` maps onto `jax.lax.Precision`, which decomposes a
@@ -501,6 +510,9 @@ Done:
   embedding, modulation, joint attention, both block types and the
   full model, verified against the reference across latent shapes,
   text lengths and timesteps
+- Sampler and generation pipeline, complete: schedule, Euler
+  integration, latent packing, prompt caching, and an end-to-end
+  generation verified against real autoencoder weights
 
 Remaining, in intended order. Each phase should be finished and tested
 before the next begins, rather than writing everything and debugging at
@@ -516,8 +528,9 @@ the end:
    performance change and belongs with phase 5. Blocks currently run
    in a Python loop over the stacked parameter axis, which is correct
    but compiles the block body once per block.
-4. **Sampling**: schedule, prompt-embedding cache, full pipeline,
-   end-to-end parity at a fixed seed.
+4. **Sampling**: done. What remains is an end-to-end parity run
+   against the reference at a fixed seed, which needs the full-size
+   checkpoint and therefore more memory than a CPU sandbox has.
 5. **Performance**: splash attention, scan tuning, mesh sharding for
    Kaggle v5e-8. Deliberately last, so nothing is optimized before it is
    known to be correct.

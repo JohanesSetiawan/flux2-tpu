@@ -38,4 +38,7 @@ python -m tests.integration.test_checkpoint_structure
 
 # Numerical parity of the diffusion transformer against the reference.
 python -m tests.integration.test_transformer_parity --reference-source-path /tmp/flux2
+
+# One full generation through the sampler and the real decoder.
+python -m tests.integration.test_end_to_end_generation
 ```

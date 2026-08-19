@@ -12,6 +12,7 @@ file within the package defines it.
 
 from .checkpoint import CheckpointSourceConfig, InferenceConfig
 from .precision import NumericPrecision
+from .sampling import SamplingConfig
 from .text_encoder import TextEncoderConfig
 from .transformer import TransformerConfig
 from .runtime import (
@@ -30,6 +31,7 @@ __all__ = [
     "MemoryResidencyStrategy",
     "NumericPrecision",
     "ResolutionBucket",
+    "SamplingConfig",
     "STANDARD_RESOLUTION_BUCKETS",
     "TextEncoderConfig",
     "TransformerConfig",
