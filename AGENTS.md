@@ -472,6 +472,31 @@ the result matches explicit Euler exactly, and that refining the steps
 converges toward the analytic answer. The second is what catches a sign
 error, which would satisfy the first while integrating backwards.
 
+### Replication multiplies memory across a pod, it does not divide it
+
+The mistake that exhausted an eight-chip v5e-8 before a single image was
+generated. `plan_component_residency` was reasoned about as "128 GiB
+aggregate, everything fits", but aggregate capacity is meaningless for a
+replicated component: what is available per chip stays 15.75 GiB, and a
+replicated 5.80 GiB text encoder weighs 5.80 GiB on every one of them,
+plus 46 GiB of host transfer during load.
+
+`SPLITTABLE_GROUPS_BY_COMPONENT` in `src/execution/sharding.py` now
+decides per component and per group. The text encoder's layer stack is
+split, bringing it from 5.80 GiB per chip to 0.63 GiB; its embedding
+table stays replicated because it is read by gather, and splitting a
+lookup table would make every lookup a collective.
+
+Measured per-device weight, computed from each array's actual sharding
+rather than from tree totals, is now logged at load. Report a
+component's total size alone and an over-replication looks affordable
+when it is not.
+
+When adding a component, add it to the policy table. An absent one
+replicates everything, which is safe but wasteful; a component never
+placed at all stays on the first device while the rest of the pod
+idles.
+
 ### Every execution option must be output-preserving, and is tested as such
 
 `src/execution` and the `ExecutionConfig` flags change how work is
@@ -657,6 +682,23 @@ is what the persistent cache eliminates on later runs.
 Measured on CPU while building this: sampling was 97% compilation, and
 autoencoder decode was 97% execution. Two stages of comparable wall
 time, needing entirely different work.
+
+### Per-stage compilation attribution must be bounded on both sides
+
+Compilation events are recorded process-wide and read at the end of each
+stage. Reading alone is not enough: anything pending when a stage begins
+belongs to whatever ran before it. Without discarding at the start, the
+recorder is a running total, and a real Colab log showed a stage
+reporting 3.795s of compilation against 2.347s of wall time.
+
+`timed_stage` now discards pending events on entry and clamps the
+reported compilation to the measured wall time, since the two figures
+come from different clocks and can disagree at the margins.
+
+Related wording fix: a stage that hands nothing back to the timer may
+still block internally. The label says the timer did not wait, not that
+the work was unawaited, because the earlier phrasing appeared in a
+Kaggle log beside a stage that did block on its own.
 
 ### Timing JAX requires blocking, or it measures nothing
 

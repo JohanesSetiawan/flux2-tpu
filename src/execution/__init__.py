@@ -14,14 +14,18 @@ from .residency import (
     plan_component_residency,
 )
 from .sharding import (
+    SPLITTABLE_GROUPS_BY_COMPONENT,
     build_device_mesh,
+    place_component,
     replicate_parameters,
     shard_stacked_blocks,
 )
 
 __all__ = [
     "ComponentResidency",
+    "SPLITTABLE_GROUPS_BY_COMPONENT",
     "build_device_mesh",
+    "place_component",
     "configure_compilation_cache",
     "evict_to_host",
     "move_to_accelerator",

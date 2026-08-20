@@ -28,6 +28,7 @@ from .arrays import (
 from .compilation import (
     CompilationRecord,
     describe_compiled_program,
+    discard_pending_compilations,
     log_compilations,
     start_recording_compilations,
 )
@@ -47,6 +48,7 @@ __all__ = [
     "CompilationRecord",
     "DeviceMemory",
     "describe_compiled_program",
+    "discard_pending_compilations",
     "log_compilations",
     "start_recording_compilations",
     "RunProfile",

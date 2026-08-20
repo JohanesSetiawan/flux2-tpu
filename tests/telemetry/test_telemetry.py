@@ -585,3 +585,85 @@ _TELEMETRY_TESTS.extend(
         test_regression_tokenizer_preload_disables_the_torch_backend,
     ]
 )
+
+
+def test_regression_compilation_does_not_leak_across_stage_boundaries() -> None:
+    """
+    A stage that compiles nothing must report no compilation.
+
+    Compilation events are recorded process-wide and read at the end of
+    each stage, so without discarding whatever is pending when a stage
+    begins, the recorder is a running total rather than a per-stage
+    measurement. That produced a stage reporting more compilation time
+    than wall time in a real Colab log, an impossibility that made the
+    whole profile suspect.
+    """
+    from src.telemetry import RunProfile, start_recording_compilations, timed_stage
+
+    start_recording_compilations()
+    logger = _silent_logger()
+
+    compute = jax.jit(lambda value: jnp.tanh(value @ value).sum())
+    matrix = jnp.ones((733, 733))
+
+    # Compiled deliberately outside any stage.
+    compute(matrix).block_until_ready()
+
+    profile = RunProfile()
+    with timed_stage(logger, "no compilation here", profile) as holder:
+        holder.set(compute(matrix))
+
+    stage = profile.stages[0]
+    assert stage.compile_seconds == 0.0, (
+        f"a stage that compiled nothing reported {stage.compile_seconds:.3f}s of "
+        f"compilation; events from before it started are leaking in"
+    )
+
+
+def test_regression_reported_compilation_never_exceeds_wall_time() -> None:
+    """
+    The two figures come from different clocks, JAX's for compilation
+    and this module's for the stage, so at the margins compilation can
+    exceed the measured wall time. Clamping keeps the split
+    arithmetically consistent instead of implying negative execution.
+    """
+    from src.telemetry import RunProfile, start_recording_compilations, timed_stage
+
+    start_recording_compilations()
+    logger = _silent_logger()
+    profile = RunProfile()
+
+    compute = jax.jit(lambda value: value * 2)
+    with timed_stage(logger, "tiny", profile) as holder:
+        holder.set(compute(jnp.ones((811,))))
+
+    stage = profile.stages[0]
+    assert stage.compile_seconds <= stage.seconds
+    assert stage.execute_seconds >= 0.0
+
+
+def test_regression_unwaited_stage_label_does_not_claim_the_work_was_unawaited() -> None:
+    """
+    A stage may block on its own result internally without handing it
+    back to the timer. The earlier wording, "not waited on", read as a
+    claim about the work rather than about the timer, and appeared in a
+    real log next to a stage that did block internally.
+    """
+    import inspect
+
+    from src.telemetry import stages
+
+    source = inspect.getsource(stages)
+    assert "timer did not wait" in source
+    assert "not waited on" not in source, (
+        "the misleading wording is still present"
+    )
+
+
+_TELEMETRY_TESTS.extend(
+    [
+        test_regression_compilation_does_not_leak_across_stage_boundaries,
+        test_regression_reported_compilation_never_exceeds_wall_time,
+        test_regression_unwaited_stage_label_does_not_claim_the_work_was_unawaited,
+    ]
+)

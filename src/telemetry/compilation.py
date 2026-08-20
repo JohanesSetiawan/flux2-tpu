@@ -143,6 +143,18 @@ def start_recording_compilations() -> CompilationRecorder:
     return _RECORDER
 
 
+def discard_pending_compilations() -> None:
+    """
+    Drop any recorded compilations without reporting them.
+
+    Called when a stage begins, so that compilation performed before it
+    started is not attributed to it. Without this the recorder is a
+    running total rather than a per-stage measurement, and a stage that
+    compiled nothing can report a large compilation time.
+    """
+    _RECORDER.take()
+
+
 def log_compilations(logger: logging.Logger, stage_name: str) -> float:
     """
     Report and clear whatever has been compiled since the last call.

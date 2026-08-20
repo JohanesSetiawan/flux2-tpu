@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 
 import jax
 
-from .compilation import log_compilations
+from .compilation import discard_pending_compilations, log_compilations
 
 
 @dataclass
@@ -184,6 +184,15 @@ def timed_stage(
             return value
 
     holder = ResultHolder()
+
+    # Compilation events are recorded process-wide and read at the end
+    # of each stage, so anything still pending belongs to whatever ran
+    # before this stage started. Left in place it would be attributed
+    # here, which is how a stage came to report more compilation time
+    # than wall time: an impossibility that made the whole profile
+    # suspect.
+    discard_pending_compilations()
+
     logger.info("[stage] %s: starting%s", name, f" ({detail})" if detail else "")
     started = time.perf_counter()
 
@@ -194,15 +203,28 @@ def timed_stage(
             _block_on(holder.result)
             qualifier = ""
         else:
-            # No result was handed back, so there is nothing to wait for
-            # and the figure covers dispatch alone.
-            qualifier = " (dispatch only, not waited on)"
+            # No result was handed back, so this timer could not wait for
+            # one. The stage may still have waited internally, which is
+            # why the wording says the timer did not wait rather than
+            # claiming the work was never awaited: an earlier version
+            # read as the latter and misdescribed stages that block on
+            # their own.
+            qualifier = " (timer did not wait; stage may have blocked internally)"
 
         elapsed = time.perf_counter() - started
 
         # Read compilation events now, before anything else compiles, so
-        # whatever JAX reports is attributable to this stage.
+        # whatever JAX reports is attributable to this stage. Paired
+        # with the discard at the start, this bounds attribution to the
+        # stage's own window on both sides.
         compile_seconds = log_compilations(logger, name)
+
+        # Compilation is measured by JAX's own clock and the stage by
+        # this one, so at the margins the reported compilation can
+        # slightly exceed the measured wall time. Clamping keeps the
+        # reported split arithmetically consistent rather than showing
+        # a negative execution time.
+        compile_seconds = min(compile_seconds, elapsed)
 
         if compile_seconds > 0.0:
             logger.info(

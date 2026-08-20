@@ -44,6 +44,7 @@ from .config import (
 )
 from .execution import (
     build_device_mesh,
+    place_component,
     configure_compilation_cache,
     evict_to_host,
     move_to_accelerator,
@@ -54,6 +55,7 @@ from .execution import (
 from .models import decode_latent, encode_prompt, predict_velocity
 from .telemetry import (
     RunProfile,
+    format_bytes,
     start_recording_compilations,
     timed_stage,
     describe_array,
@@ -275,30 +277,22 @@ class Pipeline:
 
         self._mesh = build_device_mesh(self._logger)
 
-        # Block stacks are large enough to be worth splitting; everything
-        # else is replicated, which needs no collectives and costs little
-        # at these sizes.
-        self._transformer_parameters = {
-            group_name: (
-                shard_stacked_blocks(group, self._mesh, self._logger)
-                if group_name in ("double_blocks", "single_blocks")
-                else replicate_parameters(group, self._mesh)
-            )
-            for group_name, group in self._transformer_parameters.items()
-        }
-
-        # The autoencoder and text encoder must be placed on the mesh
-        # too, and an earlier version forgot them. Parameters that never
-        # touch the mesh stay wherever restore left them, which is the
-        # first device, so on a pod the decoder ran on one chip while
-        # the other seven idled. Replication rather than splitting is
-        # right for both: the decoder is small, and the text encoder
-        # runs once per prompt.
-        self._vae_parameters = replicate_parameters(self._vae_parameters, self._mesh)
+        # Which groups get split and which get replicated is decided per
+        # component by place_component, not here. See its policy table
+        # for why the distinction matters: replication multiplies a
+        # component's memory by the device count rather than dividing
+        # it, and getting that wrong once exhausted an eight-chip pod
+        # before a single image was generated.
+        self._transformer_parameters = place_component(
+            self._transformer_parameters, "transformer", self._mesh, self._logger
+        )
+        self._vae_parameters = place_component(
+            self._vae_parameters, "vae", self._mesh, self._logger
+        )
 
         if self._text_encoder_is_resident():
-            self._text_encoder_parameters = replicate_parameters(
-                self._text_encoder_parameters, self._mesh
+            self._text_encoder_parameters = place_component(
+                self._text_encoder_parameters, "text_encoder", self._mesh, self._logger
             )
         else:
             self._text_encoder_parameters = evict_to_host(
@@ -312,6 +306,7 @@ class Pipeline:
                 ("text_encoder", self._text_encoder_parameters),
             ):
                 self._describe_component(f"{component_name} after placement", parameters)
+            self._log_resident_weight_per_device()
             log_memory_snapshot(self._logger, "loading")
             load_profile.log_summary(self._logger, "Load profile")
 
@@ -328,6 +323,48 @@ class Pipeline:
         if not self._execution_config.enable_telemetry:
             return _UntimedStage()
         return timed_stage(self._logger, name, profile, detail)
+
+    def _log_resident_weight_per_device(self) -> None:
+        """
+        Report how much parameter memory each device actually holds.
+
+        A component's total size says nothing about the load on a single
+        chip: a replicated group weighs the same on every device, while
+        a split one weighs a fraction. Reporting the total alone is what
+        made an over-replicated text encoder look affordable when it was
+        not.
+
+        Counts bytes from the sharding of each array rather than from
+        the tree's total, so the figure reflects what was actually
+        placed rather than what was intended.
+        """
+        device_count = self._mesh.devices.size if self._mesh is not None else 1
+        total_per_device = 0
+
+        for component_name, parameters in (
+            ("transformer", self._transformer_parameters),
+            ("vae", self._vae_parameters),
+            ("text_encoder", self._text_encoder_parameters),
+        ):
+            component_bytes = 0
+            for leaf in jax.tree_util.tree_leaves(parameters):
+                leaf_bytes = int(np.prod(leaf.shape)) * leaf.dtype.itemsize
+                specification = getattr(getattr(leaf, "sharding", None), "spec", None)
+                is_split = specification is not None and any(
+                    entry is not None for entry in specification
+                )
+                component_bytes += leaf_bytes // device_count if is_split else leaf_bytes
+
+            total_per_device += component_bytes
+            self._logger.info(
+                "  %s holds %s per device", component_name, format_bytes(component_bytes)
+            )
+
+        self._logger.info(
+            "  resident parameters per device: %s across %d device(s)",
+            format_bytes(total_per_device),
+            device_count,
+        )
 
     def _describe_component(self, label: str, parameters) -> None:
         """Record a component's size, dtypes and placement."""

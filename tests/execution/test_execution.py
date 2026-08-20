@@ -46,7 +46,9 @@ from src.config import (  # noqa: E402
     resolve_residency_strategy,
 )
 from src.execution import (  # noqa: E402
+    SPLITTABLE_GROUPS_BY_COMPONENT,
     build_device_mesh,
+    place_component,
     configure_compilation_cache,
     evict_to_host,
     move_to_accelerator,
@@ -456,6 +458,101 @@ def test_regression_compilation_cache_enabled_with_a_directory(tmp_directory=Non
         )
 
 
+def _bytes_per_device(tree, device_count: int) -> int:
+    """Count what one device actually holds, respecting each array's sharding."""
+    total = 0
+    for leaf in jax.tree_util.tree_leaves(tree):
+        leaf_bytes = int(np.prod(leaf.shape)) * leaf.dtype.itemsize
+        specification = getattr(getattr(leaf, "sharding", None), "spec", None)
+        is_split = specification is not None and any(
+            entry is not None for entry in specification
+        )
+        total += leaf_bytes // device_count if is_split else leaf_bytes
+    return total
+
+
+def _synthetic_text_encoder() -> dict:
+    """The real text encoder's shape at reduced scale: a big embedding table
+    plus a stack of layers."""
+    return {
+        "embed_tokens": {"weight": jnp.zeros((2048, 256), dtype=jnp.bfloat16)},
+        "layers": {
+            "self_attn_q_proj_weight": jnp.zeros((27, 256, 512), dtype=jnp.bfloat16),
+            "input_layernorm_weight": jnp.zeros((27, 256), dtype=jnp.bfloat16),
+        },
+    }
+
+
+def test_regression_text_encoder_layers_are_split_not_replicated() -> None:
+    """
+    The bug that exhausted an eight-chip pod.
+
+    Replication does not divide a component's memory across devices, it
+    multiplies it: the text encoder's 5.80 GiB became 5.80 GiB resident
+    on every chip, plus 46 GiB of host transfer during load, for a
+    component used once per prompt. Splitting its layer stack instead
+    brings that to a fraction.
+
+    Asserted as a memory figure rather than a sharding annotation,
+    because the annotation is a means and the memory is the thing that
+    ran out.
+    """
+    mesh = build_device_mesh(_silent_logger())
+    device_count = jax.device_count()
+    parameters = _synthetic_text_encoder()
+
+    placed = place_component(parameters, "text_encoder", mesh, _silent_logger())
+
+    total = _bytes_per_device(parameters, 1)
+    per_device = _bytes_per_device(placed, device_count)
+
+    assert per_device < total, (
+        f"each device holds {per_device} bytes of {total}; the layer stack does not "
+        f"appear to be split, which is what exhausted the pod"
+    )
+
+
+def test_regression_embedding_table_stays_replicated() -> None:
+    """
+    The embedding table is read by gather, not matrix multiply.
+    Splitting a lookup table across devices would make every lookup a
+    collective, which is worse than the memory it saves.
+    """
+    mesh = build_device_mesh(_silent_logger())
+
+    placed = place_component(_synthetic_text_encoder(), "text_encoder", mesh, _silent_logger())
+
+    specification = placed["embed_tokens"]["weight"].sharding.spec
+    assert all(entry is None for entry in specification), (
+        f"the embedding table was split: {specification}"
+    )
+
+
+def test_regression_every_component_has_a_placement_policy() -> None:
+    """
+    A component absent from the policy replicates everything, which is
+    correct but wasteful. More importantly, a component never placed at
+    all stays on the first device while the rest of the pod idles, which
+    is what happened to the autoencoder for an entire phase.
+    """
+    assert set(SPLITTABLE_GROUPS_BY_COMPONENT) == {"transformer", "text_encoder", "vae"}
+
+
+def test_regression_unknown_component_replicates_rather_than_failing() -> None:
+    """
+    An unrecognised component should still be placed, using the safe
+    default. Failing instead would turn a future addition into a crash
+    rather than a memory cost that shows up in the log.
+    """
+    mesh = build_device_mesh(_silent_logger())
+    parameters = {"group": {"weight": jnp.zeros((4, 8))}}
+
+    placed = place_component(parameters, "not_a_component", mesh, _silent_logger())
+
+    specification = placed["group"]["weight"].sharding.spec
+    assert all(entry is None for entry in specification)
+
+
 _EXECUTION_TESTS = [
     test_smoke_simulated_devices_are_available,
     test_regression_residency_plan_keeps_the_transformer_resident,
@@ -471,6 +568,10 @@ _EXECUTION_TESTS = [
     test_regression_sharding_splits_the_widest_remaining_axis,
     test_regression_sharding_replicates_indivisible_shapes,
     test_regression_sharding_preserves_values,
+    test_regression_text_encoder_layers_are_split_not_replicated,
+    test_regression_embedding_table_stays_replicated,
+    test_regression_every_component_has_a_placement_policy,
+    test_regression_unknown_component_replicates_rather_than_failing,
     test_regression_scanned_transformer_matches_unrolled,
     test_regression_scanned_text_encoder_matches_unrolled,
     test_regression_scanned_text_encoder_selects_the_same_depths,

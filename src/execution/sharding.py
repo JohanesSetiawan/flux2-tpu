@@ -52,6 +52,73 @@ def replicate_parameters(parameters: dict, mesh: Mesh) -> dict:
     )
 
 
+# Which parameter groups of each component are large enough to be worth
+# splitting across devices, rather than copied to every one.
+#
+# The distinction is not cosmetic and getting it wrong is expensive.
+# Replication does not divide a component's memory across a pod; it
+# multiplies it by the device count. An earlier version replicated the
+# whole text encoder, 5.80 GiB, onto all eight chips of a v5e-8. That
+# is 5.80 GiB resident per chip for a component used once per prompt,
+# and 46 GiB of host transfer during load, and it exhausted the device
+# mapping before a single image was generated.
+#
+# Splitting its layer stack instead brings that to 0.63 GiB per chip.
+# The embedding table stays replicated: it is read by gather rather
+# than matrix multiply, and splitting a lookup table across devices
+# would make every lookup a collective.
+SPLITTABLE_GROUPS_BY_COMPONENT = {
+    "transformer": frozenset({"double_blocks", "single_blocks"}),
+    "text_encoder": frozenset({"layers"}),
+    # The autoencoder is 189 MiB. Replicating it costs little and avoids
+    # collectives in a decoder that is already the heaviest stage.
+    "vae": frozenset(),
+}
+
+
+def place_component(
+    parameters: dict,
+    component_name: str,
+    mesh: Mesh,
+    logger: logging.Logger,
+) -> dict:
+    """
+    Place one component on the mesh, splitting the groups worth
+    splitting and replicating the rest.
+
+    Every component must be placed. Parameters that never touch the
+    mesh stay wherever restore left them, which is the first device, so
+    a component omitted here runs on one chip of a pod while the others
+    idle. That happened to the autoencoder for an entire phase before it
+    was noticed.
+
+    Parameters
+    ----------
+    parameters:
+        The component's parameter tree, keyed by group.
+    component_name:
+        Used to look up which groups are splittable. An unknown name
+        replicates everything, which is the safe default: correct, and
+        merely uses more memory than necessary.
+    """
+    splittable = SPLITTABLE_GROUPS_BY_COMPONENT.get(component_name, frozenset())
+
+    if component_name not in SPLITTABLE_GROUPS_BY_COMPONENT:
+        logger.info(
+            "  %s has no placement policy; replicating every group",
+            component_name,
+        )
+
+    placed = {}
+    for group_name, group in parameters.items():
+        if group_name in splittable:
+            placed[group_name] = shard_stacked_blocks(group, mesh, logger)
+        else:
+            placed[group_name] = replicate_parameters(group, mesh)
+
+    return placed
+
+
 def shard_stacked_blocks(
     parameters: dict, mesh: Mesh, logger: logging.Logger
 ) -> dict:
