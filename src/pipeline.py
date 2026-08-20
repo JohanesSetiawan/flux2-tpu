@@ -173,6 +173,27 @@ class Pipeline:
                 "resident" if entry.resident else "held on host, moved in when used",
             )
 
+        # Each model is compiled once, as a single program, rather than
+        # being dispatched operation by operation.
+        #
+        # This is not a micro-optimisation. Without an enclosing jit,
+        # every operation inside a model becomes its own compiled
+        # program: measured on a v5e-1, one autoencoder decode compiled
+        # thirty-five separate programs taking eighty-seven seconds, of
+        # which seventy-eight was convolutions compiled individually.
+        # Wrapping the entry point lets XLA see the whole graph, compile
+        # it once, and fuse across operations that were previously
+        # separate dispatches.
+        #
+        # Configuration objects are frozen dataclasses and therefore
+        # hashable, so they can be static arguments. Latent dimensions
+        # are static too, since they determine shapes.
+        self._compiled_encode = jax.jit(encode_prompt, static_argnums=(3, 4))
+        self._compiled_predict_velocity = jax.jit(
+            predict_velocity, static_argnums=(3, 4, 6, 7)
+        )
+        self._compiled_decode = jax.jit(decode_latent, static_argnums=(2,))
+
         self._mesh = None
         self._bundle_path: Path | None = None
         self._text_encoder_parameters: dict | None = None
@@ -340,7 +361,7 @@ class Pipeline:
                 sharding=NamedSharding(self._mesh, PartitionSpec()),
             )
 
-        conditioning = encode_prompt(
+        conditioning = self._compiled_encode(
             jnp.asarray(tokenized.token_ids),
             jnp.asarray(tokenized.token_is_real),
             parameters,
@@ -457,7 +478,7 @@ class Pipeline:
         )
 
         def velocity_at(tokens: jnp.ndarray, timesteps: jnp.ndarray) -> jnp.ndarray:
-            return predict_velocity(
+            return self._compiled_predict_velocity(
                 tokens,
                 conditioning,
                 timesteps,
@@ -490,7 +511,7 @@ class Pipeline:
         decode_detail = f"precision {self._vae_config.layer.precision.value}"
         with self._stage("vae decode", profile, decode_detail) as holder:
             decoded = holder.set(
-                decode_latent(latent, self._vae_parameters, self._vae_config)
+                self._compiled_decode(latent, self._vae_parameters, self._vae_config)
             )
         self._describe_tensor("decoded image", decoded)
 

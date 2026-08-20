@@ -573,6 +573,40 @@ callbacks serialise the program around them. Expect a generation to be
 several times slower with tracing on. Use the prefix filter: tracing
 everything in a twenty-block stack buries the line that matters.
 
+### Model entry points must be wrapped in jax.jit
+
+Without an enclosing jit, every operation inside a model becomes its own
+compiled program. This is easy to miss because the results are correct
+either way; only the cost differs, and it differs enormously.
+
+Measured on a v5e-1 before the fix: one autoencoder decode compiled
+thirty-five separate programs taking eighty-seven seconds, of which
+seventy-eight was `jit(conv_general_dilated)`, the convolutions compiled
+one at a time. The text encoder compiled fifty-one programs including
+`jit(cos)` and `jit(sin)` individually.
+
+`Pipeline` now wraps `encode_prompt`, `predict_velocity` and
+`decode_latent` in `jax.jit` with the configuration objects and latent
+dimensions as static arguments, which is valid because every
+configuration here is a frozen dataclass and therefore hashable.
+
+Any new model entry point must be wrapped the same way. The symptom to
+watch for in a profile is a compilation list naming primitive
+operations rather than one entry per model.
+
+### The tokenizer import can cost more than the model load
+
+`transformers` selects a deep learning backend when first imported, and
+on a machine with PyTorch installed it imports the whole stack. Measured
+on Colab, loading the tokenizer took 47 seconds, nearly all of it
+PyTorch and torch_xla being pulled in behind it, for a tokenizer that is
+pure Python and Rust and needs no backend.
+
+`src/tokenization/prompt.py` sets `USE_TORCH=0` before the import. It
+must be set before transformers is first imported anywhere in the
+process, which is why it sits at the import site rather than in a
+configuration object.
+
 ### A stage's wall time is meaningless until compilation is separated out
 
 This is the most important thing the telemetry does, and the reason it

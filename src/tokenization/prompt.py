@@ -9,6 +9,7 @@ the model was conditioned against travels with the weights.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +31,12 @@ ENABLE_THINKING = False
 # src/layers/masking.py for why that makes key-side padding suppression
 # necessary rather than redundant.
 PADDING_SIDE = "right"
+
+# transformers selects a deep learning backend at import time. Setting
+# this to a falsy value makes it skip PyTorch, which it would otherwise
+# import in full for a tokenizer that does not need it.
+BACKEND_SELECTION_VARIABLE = "USE_TORCH"
+BACKEND_DISABLED_VALUE = "0"
 
 
 @dataclass(frozen=True)
@@ -67,6 +74,18 @@ def load_tokenizer(bundle_path: Path, logger: logging.Logger):
     divergence produces a well-formed but differently-conditioned
     result that no shape or dtype check can detect.
     """
+    # The transformers library imports a deep learning backend on first
+    # use, and on a machine with PyTorch installed that costs tens of
+    # seconds. Measured on Colab: importing it took 47 seconds, of which
+    # nearly all was PyTorch and torch_xla being pulled in behind it.
+    #
+    # Only the tokenizer is wanted here, which is pure Python and Rust
+    # and needs no backend at all. Declaring that before the import
+    # skips the backend entirely. It must be set before transformers is
+    # first imported anywhere in the process, which is why it sits here
+    # rather than in a configuration object read later.
+    os.environ.setdefault(BACKEND_SELECTION_VARIABLE, BACKEND_DISABLED_VALUE)
+
     try:
         from transformers import AutoTokenizer
     except ImportError as error:

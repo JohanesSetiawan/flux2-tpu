@@ -490,3 +490,56 @@ _TELEMETRY_TESTS.extend(
         test_regression_profile_reports_the_compilation_share,
     ]
 )
+
+
+def test_regression_jitting_an_entry_point_collapses_program_count() -> None:
+    """
+    The fix for the largest cost measured on real hardware.
+
+    Without an enclosing jit, every operation inside a model becomes its
+    own compiled program. Measured on a v5e-1, one autoencoder decode
+    compiled thirty-five separate programs taking eighty-seven seconds,
+    of which seventy-eight was convolutions compiled individually.
+
+    This asserts the collapse directly: the same computation, wrapped,
+    must compile into far fewer programs. Counting programs rather than
+    comparing durations keeps the test meaningful on any machine, since
+    compile times vary by orders of magnitude between backends while
+    the program count does not.
+    """
+    from src.telemetry import log_compilations, start_recording_compilations
+
+    start_recording_compilations()
+    logger = _silent_logger()
+
+    def several_operations(value):
+        result = jnp.tanh(value)
+        result = result + jnp.sin(result)
+        result = jnp.mean(result, axis=-1)
+        return jnp.sqrt(jnp.abs(result))
+
+    # Distinct shapes so neither path reuses the other's programs.
+    log_compilations(logger, "clear")
+    several_operations(jnp.ones((37, 41))).block_until_ready()
+    unjitted_programs = len(
+        [record for record in _recorded_since(logger)]
+    )
+
+    jax.jit(several_operations)(jnp.ones((43, 47))).block_until_ready()
+    jitted_programs = len([record for record in _recorded_since(logger)])
+
+    assert jitted_programs < unjitted_programs, (
+        f"wrapping in jit produced {jitted_programs} programs against "
+        f"{unjitted_programs} unwrapped; the entry point may not be compiled "
+        f"as a single program"
+    )
+
+
+def _recorded_since(logger):
+    """Take whatever has compiled since the last call."""
+    from src.telemetry.compilation import _RECORDER
+
+    return _RECORDER.take()
+
+
+_TELEMETRY_TESTS.append(test_regression_jitting_an_entry_point_collapses_program_count)
