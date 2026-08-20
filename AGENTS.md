@@ -202,7 +202,8 @@ src/
 │   ├── arrays.py          tensor shape, dtype, size and placement
 │   └── devices.py         platform and accelerator memory
 ├── tokenization/      prompt text to padded token identifiers
-│   └── prompt.py
+│   ├── fast.py            tokenizers plus Jinja, no deep learning framework
+│   └── prompt.py          entry point, falls back to transformers
 ├── interfaces/        front ends, wiring only
 │   ├── session.py         input handling both front ends share
 │   ├── widgets.py         in-notebook controls
@@ -639,6 +640,33 @@ convolutional decoder in float32. That cost belongs to the persistent
 compilation cache, not to further restructuring, which makes putting
 the cache somewhere durable the highest-value remaining change on
 Colab.
+
+### The fast tokenizer must stay identical, and is tested that way
+
+`src/tokenization/fast.py` replaces the transformers tokenizer with the
+Rust tokenizers library plus Jinja, cutting the import from about 6
+seconds to 1 in a sandbox, and from 19 on Kaggle or 47 on Colab where
+the filesystem is cold and network-backed.
+
+This is only safe because the bundle ships `tokenizer.json`, which
+defines the entire pipeline: normalizer, pre-tokenizer, post-processor
+and decoder. Nothing is reconstructed. If a future checkpoint omits that
+file, `load_tokenizer` falls back to transformers rather than rebuilding
+a BPE pipeline from vocabulary and merges, because a pipeline rebuilt by
+hand can differ subtly and a differing token produces a different image
+with nothing to signal it.
+
+Verified identical against transformers, token for token, across eleven
+prompts covering non-Latin scripts, emoji with modifiers, literal
+special-token text, edge whitespace, embedded newlines and tabs, and
+lengths that force truncation. Any change here must re-run that
+comparison; property tests cannot substitute for it.
+
+One detail worth knowing: Jinja must be configured with `trim_blocks`
+and `lstrip_blocks`, which is how transformers configures its own
+environment. Without them every control block in the template leaves a
+stray newline, and the rendered prompt differs before tokenization even
+begins.
 
 ### The tokenizer import can cost more than the model load
 

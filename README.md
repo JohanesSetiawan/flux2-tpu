@@ -135,7 +135,8 @@ src/
 │   ├── arrays.py          tensor shape, dtype, size and placement
 │   └── devices.py         platform and accelerator memory
 ├── tokenization/      prompt text to padded token identifiers
-│   └── prompt.py
+│   ├── fast.py            tokenizers plus Jinja, no deep learning framework
+│   └── prompt.py          entry point, falls back to transformers
 ├── interfaces/        front ends, wiring only
 │   ├── session.py         input handling both front ends share
 │   ├── widgets.py         in-notebook controls

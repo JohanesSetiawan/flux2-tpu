@@ -63,6 +63,40 @@ class TokenizedPrompt:
 
 def load_tokenizer(bundle_path: Path, logger: logging.Logger):
     """
+    Load the fastest tokenizer the bundle supports.
+
+    Prefers the self-contained path, which needs only the tokenizers and
+    Jinja libraries and avoids importing a deep learning framework for a
+    job that has nothing to do with one. Falls back to transformers when
+    the bundle lacks the full pipeline definition, since a slower load
+    is far better than none.
+
+    The fallback is not a formality. Reconstructing a BPE pipeline from
+    vocabulary and merge files alone risks tokenization that differs
+    subtly from the reference, and a differing token produces a
+    different image with nothing to signal it. If the definition is
+    absent, defer to the library that knows how to rebuild it.
+    """
+    from .fast import TokenizerFilesMissingError, load_fast_tokenizer
+
+    tokenizer_directory = bundle_path / TOKENIZER_SUBDIRECTORY_NAME
+    if not tokenizer_directory.is_dir():
+        raise FileNotFoundError(
+            f"No tokenizer directory found at {tokenizer_directory}. The checkpoint "
+            f"bundle should contain one."
+        )
+
+    try:
+        return load_fast_tokenizer(tokenizer_directory, logger)
+    except TokenizerFilesMissingError as reason:
+        logger.info(
+            "Falling back to the transformers tokenizer: %s", reason
+        )
+        return _load_transformers_tokenizer(bundle_path, logger)
+
+
+def _load_transformers_tokenizer(bundle_path: Path, logger: logging.Logger):
+    """
     Load the tokenizer shipped inside the checkpoint bundle.
 
     The transformers library is used purely for its tokenizer, which is
@@ -149,6 +183,15 @@ def tokenize_prompts(
     logger:
         Receives a warning if any prompt was truncated.
     """
+    # The fast tokenizer renders, encodes and pads in one step, since it
+    # owns all three pieces. The transformers path keeps its original
+    # sequence.
+    if hasattr(tokenizer, "encode_to_fixed_length"):
+        token_ids, token_is_real = tokenizer.encode_to_fixed_length(
+            prompts, sequence_length, logger
+        )
+        return TokenizedPrompt(token_ids=token_ids, token_is_real=token_is_real)
+
     templated = [apply_chat_template(tokenizer, prompt) for prompt in prompts]
 
     encoded = tokenizer(

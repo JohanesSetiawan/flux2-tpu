@@ -7,6 +7,7 @@ tokenized differently from the reference produces a valid conditioning
 tensor of exactly the right shape, carrying different content.
 """
 
+from .fast import FastTokenizer, TokenizerFilesMissingError, load_fast_tokenizer
 from .prompt import (
     TokenizedPrompt,
     load_tokenizer,
@@ -15,7 +16,10 @@ from .prompt import (
 )
 
 __all__ = [
+    "FastTokenizer",
     "TokenizedPrompt",
+    "TokenizerFilesMissingError",
+    "load_fast_tokenizer",
     "load_tokenizer",
     "preload_tokenizer_library",
     "tokenize_prompts",
