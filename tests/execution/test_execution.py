@@ -166,6 +166,49 @@ def test_regression_eviction_moves_parameters_to_host_and_back() -> None:
     )
 
 
+def test_regression_move_to_accelerator_names_its_destination() -> None:
+    """
+    Moving parameters back must name where they are going.
+
+    jax.device_put(array) with no destination is a no-op for an array
+    already committed to a device, so an earlier version of this
+    function silently left evicted parameters on the host. Nothing
+    failed at that point; the component simply ran on the host, and the
+    mismatch only surfaced later when its output met an
+    accelerator-resident tensor inside a jit boundary.
+
+    The test commits to a device explicitly and checks the array
+    actually lands where it was told, rather than checking only that the
+    call returned something.
+    """
+    logger = _silent_logger()
+    devices = jax.devices()
+    parameters = {"weight": jax.device_put(jnp.ones((4,)), devices[-1])}
+
+    moved = move_to_accelerator(parameters, logger, "test", sharding=devices[0])
+
+    assert moved["weight"].devices() == {devices[0]}, (
+        f"parameters landed on {moved['weight'].devices()} rather than the "
+        f"requested {devices[0]}; the destination may not have been passed through"
+    )
+
+
+def test_regression_round_trip_through_host_returns_to_the_accelerator() -> None:
+    """
+    The full eviction cycle must end where it started. This is the
+    sequence the swapped residency strategy runs on every new prompt.
+    """
+    logger = _silent_logger()
+    devices = jax.devices()
+    original = jax.device_put(jnp.arange(4.0), devices[0])
+
+    on_host = evict_to_host({"weight": original}, logger, "test")
+    back = move_to_accelerator(on_host, logger, "test", sharding=devices[0])
+
+    assert back["weight"].devices() == {devices[0]}
+    assert np.array_equal(np.asarray(back["weight"]), np.arange(4.0))
+
+
 def test_smoke_mesh_covers_every_visible_device() -> None:
     mesh = build_device_mesh(_silent_logger())
 
@@ -420,6 +463,8 @@ _EXECUTION_TESTS = [
     test_regression_residency_plan_rejects_unresolved_strategy,
     test_regression_evictable_set_excludes_the_transformer,
     test_regression_eviction_moves_parameters_to_host_and_back,
+    test_regression_move_to_accelerator_names_its_destination,
+    test_regression_round_trip_through_host_returns_to_the_accelerator,
     test_smoke_mesh_covers_every_visible_device,
     test_regression_replication_places_a_full_copy_everywhere,
     test_regression_sharding_never_splits_the_block_axis,

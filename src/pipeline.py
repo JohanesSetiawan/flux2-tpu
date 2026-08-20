@@ -21,6 +21,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.sharding import NamedSharding, PartitionSpec
 
 from .checkpoint import download_bundle, resolve_huggingface_token, restore_component
 from .config import (
@@ -134,6 +135,7 @@ class Pipeline:
                 "resident" if entry.resident else "held on host, moved in when used",
             )
 
+        self._mesh = None
         self._bundle_path: Path | None = None
         self._text_encoder_parameters: dict | None = None
         self._transformer_parameters: dict | None = None
@@ -177,20 +179,34 @@ class Pipeline:
 
         configure_compilation_cache(self._execution_config, self._logger)
 
-        mesh = build_device_mesh(self._logger)
-        # Block stacks are the only parameters large enough to be worth
-        # splitting; everything else is replicated, which needs no
-        # collectives and costs little at these sizes.
+        self._mesh = build_device_mesh(self._logger)
+
+        # Block stacks are large enough to be worth splitting; everything
+        # else is replicated, which needs no collectives and costs little
+        # at these sizes.
         self._transformer_parameters = {
             group_name: (
-                shard_stacked_blocks(group, mesh, self._logger)
+                shard_stacked_blocks(group, self._mesh, self._logger)
                 if group_name in ("double_blocks", "single_blocks")
-                else replicate_parameters(group, mesh)
+                else replicate_parameters(group, self._mesh)
             )
             for group_name, group in self._transformer_parameters.items()
         }
 
-        if not self._text_encoder_is_resident():
+        # The autoencoder and text encoder must be placed on the mesh
+        # too, and an earlier version forgot them. Parameters that never
+        # touch the mesh stay wherever restore left them, which is the
+        # first device, so on a pod the decoder ran on one chip while
+        # the other seven idled. Replication rather than splitting is
+        # right for both: the decoder is small, and the text encoder
+        # runs once per prompt.
+        self._vae_parameters = replicate_parameters(self._vae_parameters, self._mesh)
+
+        if self._text_encoder_is_resident():
+            self._text_encoder_parameters = replicate_parameters(
+                self._text_encoder_parameters, self._mesh
+            )
+        else:
             self._text_encoder_parameters = evict_to_host(
                 self._text_encoder_parameters, self._logger, "text_encoder"
             )
@@ -234,7 +250,12 @@ class Pipeline:
         # a few megabytes against several gigabytes.
         parameters = self._text_encoder_parameters
         if not self._text_encoder_is_resident():
-            parameters = move_to_accelerator(parameters, self._logger, "text_encoder")
+            parameters = move_to_accelerator(
+                parameters,
+                self._logger,
+                "text_encoder",
+                sharding=NamedSharding(self._mesh, PartitionSpec()),
+            )
 
         conditioning = encode_prompt(
             jnp.asarray(tokenized.token_ids),

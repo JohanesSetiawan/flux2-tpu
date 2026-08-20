@@ -104,12 +104,33 @@ def evict_to_host(parameters: dict, logger: logging.Logger, component_name: str)
     return jax.tree_util.tree_map(lambda array: jax.device_put(array, host), parameters)
 
 
-def move_to_accelerator(parameters: dict, logger: logging.Logger, component_name: str) -> dict:
+def move_to_accelerator(
+    parameters: dict,
+    logger: logging.Logger,
+    component_name: str,
+    sharding=None,
+) -> dict:
     """
-    Copy a component's parameters into the default accelerator's memory.
+    Copy a component's parameters back into accelerator memory.
 
-    Uses the default device rather than an explicit one, so that a
-    sharded mesh set up elsewhere is not overridden here.
+    The destination must be named explicitly. `jax.device_put(array)`
+    with no destination is a no-op for an array already committed to a
+    device, so an earlier version of this function silently left the
+    evicted parameters on the host. Nothing failed at that point: the
+    component ran on the host instead, and the mismatch only surfaced
+    later, when its output met an accelerator-resident tensor inside a
+    jit boundary.
+
+    Parameters
+    ----------
+    sharding:
+        Where to place the parameters. Defaults to the first accelerator
+        device. Pass a mesh sharding to place them across a pod instead.
     """
-    logger.info("Moving %s parameters to the accelerator", component_name)
-    return jax.tree_util.tree_map(jax.device_put, parameters)
+    destination = sharding if sharding is not None else jax.devices()[0]
+    logger.info(
+        "Moving %s parameters to %s", component_name, destination
+    )
+    return jax.tree_util.tree_map(
+        lambda array: jax.device_put(array, destination), parameters
+    )
