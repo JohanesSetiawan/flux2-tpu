@@ -396,3 +396,97 @@ _TELEMETRY_TESTS.extend(
         test_regression_trace_statistics_promote_before_reducing,
     ]
 )
+
+
+def test_regression_compilation_is_separated_from_execution() -> None:
+    """
+    The measurement this whole layer exists for.
+
+    A stage's wall time answers almost nothing on its own: a decode
+    taking a hundred seconds might be nearly all compilation, which is
+    paid once per shape and survives in a cache, or nearly all
+    execution, which is paid on every image. The two call for opposite
+    fixes.
+
+    A first call compiles and runs; a second only runs. The first must
+    therefore report meaningful compilation time and the second almost
+    none, with the second's wall time close to the first's execution
+    time.
+    """
+    from src.telemetry import RunProfile, start_recording_compilations, timed_stage
+
+    start_recording_compilations()
+    logger = _silent_logger()
+    profile = RunProfile()
+
+    # Distinct shape, so this is genuinely uncompiled at first call.
+    matrix = jnp.ones((613, 613))
+    compute = jax.jit(lambda value: jnp.tanh(value @ value).sum())
+
+    with timed_stage(logger, "cold", profile) as holder:
+        holder.set(compute(matrix))
+    with timed_stage(logger, "warm", profile) as holder:
+        holder.set(compute(matrix))
+
+    cold, warm = profile.stages[0], profile.stages[1]
+
+    assert cold.compile_seconds > 0.0, (
+        "a first call must report compilation time; the event listener may not be "
+        "registered"
+    )
+    assert warm.compile_seconds < cold.compile_seconds, (
+        f"a repeated call compiled for {warm.compile_seconds:.3f}s against the "
+        f"first call's {cold.compile_seconds:.3f}s; compilation may be attributed "
+        f"to the wrong stage"
+    )
+    assert cold.execute_seconds >= 0.0
+
+
+def test_regression_execution_time_never_goes_negative() -> None:
+    """
+    Wall time and compilation time come from different sources, so
+    subtracting one from the other can go negative at the margins. That
+    must clamp rather than surface as a nonsensical figure in a report.
+    """
+    from src.telemetry import StageRecord
+
+    record = StageRecord(name="odd", seconds=1.0, compile_seconds=1.5)
+
+    assert record.execute_seconds == 0.0
+
+
+def test_regression_profile_reports_the_compilation_share() -> None:
+    """
+    A run dominated by compilation will be far cheaper the second time;
+    one dominated by execution will not. The summary must make that
+    difference visible rather than leaving it to be worked out.
+    """
+    from src.telemetry import RunProfile
+
+    profile = RunProfile()
+    profile.record("mostly compiling", 10.0, compile_seconds=9.0)
+    profile.record("mostly running", 5.0, compile_seconds=0.1)
+
+    lines: list[str] = []
+
+    class CapturingLogger:
+        def info(self, message, *arguments):
+            lines.append(message % arguments if arguments else message)
+
+    profile.log_summary(CapturingLogger(), "test")
+    joined = "\n".join(lines)
+
+    assert "compiling" in joined and "executing" in joined
+    assert "a repeat should cost about" in joined, (
+        "the summary should state what a cached repeat would cost"
+    )
+    assert abs(profile.total_compile_seconds - 9.1) < 1e-9
+
+
+_TELEMETRY_TESTS.extend(
+    [
+        test_regression_compilation_is_separated_from_execution,
+        test_regression_execution_time_never_goes_negative,
+        test_regression_profile_reports_the_compilation_share,
+    ]
+)

@@ -25,6 +25,12 @@ from .arrays import (
     format_bytes,
     summarise_values,
 )
+from .compilation import (
+    CompilationRecord,
+    describe_compiled_program,
+    log_compilations,
+    start_recording_compilations,
+)
 from .devices import DeviceMemory, log_memory_snapshot, log_platform, read_device_memory
 from .stages import RunProfile, StageRecord, timed_stage
 from .tracing import (
@@ -38,7 +44,11 @@ from .tracing import (
 
 __all__ = [
     "ArrayDescription",
+    "CompilationRecord",
     "DeviceMemory",
+    "describe_compiled_program",
+    "log_compilations",
+    "start_recording_compilations",
     "RunProfile",
     "StageRecord",
     "TreeDescription",

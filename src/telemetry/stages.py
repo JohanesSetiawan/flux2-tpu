@@ -25,14 +25,37 @@ from dataclasses import dataclass, field
 
 import jax
 
+from .compilation import log_compilations
+
 
 @dataclass
 class StageRecord:
-    """One completed stage."""
+    """
+    One completed stage, with compilation separated from execution.
+
+    The split is the point. A stage's wall time answers almost nothing
+    on its own: a decode taking 108 seconds might be 105 of compilation
+    and 3 of work, or the reverse, and those call for opposite fixes.
+    Compilation is paid once per output shape and survives in a cache;
+    execution is paid on every image.
+    """
 
     name: str
     seconds: float
     detail: str = ""
+    compile_seconds: float = 0.0
+
+    @property
+    def execute_seconds(self) -> float:
+        """
+        Wall time not spent compiling.
+
+        Clamped at zero because the two measurements come from different
+        sources: wall time from a clock around the stage, compilation
+        from JAX's own events, which may include work attributed
+        slightly outside the window.
+        """
+        return max(0.0, self.seconds - self.compile_seconds)
 
 
 @dataclass
@@ -47,12 +70,25 @@ class RunProfile:
 
     stages: list[StageRecord] = field(default_factory=list)
 
-    def record(self, name: str, seconds: float, detail: str = "") -> None:
-        self.stages.append(StageRecord(name=name, seconds=seconds, detail=detail))
+    def record(
+        self, name: str, seconds: float, detail: str = "", compile_seconds: float = 0.0
+    ) -> None:
+        self.stages.append(
+            StageRecord(
+                name=name,
+                seconds=seconds,
+                detail=detail,
+                compile_seconds=compile_seconds,
+            )
+        )
 
     @property
     def total_seconds(self) -> float:
         return sum(stage.seconds for stage in self.stages)
+
+    @property
+    def total_compile_seconds(self) -> float:
+        return sum(stage.compile_seconds for stage in self.stages)
 
     def log_summary(self, logger: logging.Logger, title: str) -> None:
         """
@@ -66,16 +102,46 @@ class RunProfile:
             return
 
         total = self.total_seconds
-        logger.info("=" * 68)
-        logger.info("%s: %.2fs total", title, total)
-        logger.info("-" * 68)
+        compile_total = self.total_compile_seconds
+
+        logger.info("=" * 78)
+        logger.info(
+            "%s: %.2fs total (%.2fs compiling, %.2fs executing)",
+            title,
+            total,
+            compile_total,
+            total - compile_total,
+        )
+        logger.info("-" * 78)
+        logger.info(
+            "  %-28s %9s %9s %7s  %s", "stage", "total", "compile", "share", "detail"
+        )
 
         for stage in sorted(self.stages, key=lambda entry: entry.seconds, reverse=True):
             share = 100.0 * stage.seconds / total if total else 0.0
-            suffix = f"  {stage.detail}" if stage.detail else ""
-            logger.info("  %-34s %8.2fs  %5.1f%%%s", stage.name, stage.seconds, share, suffix)
+            logger.info(
+                "  %-28s %8.2fs %8.2fs %6.1f%%  %s",
+                stage.name,
+                stage.seconds,
+                stage.compile_seconds,
+                share,
+                stage.detail,
+            )
 
-        logger.info("=" * 68)
+        logger.info("-" * 78)
+        if compile_total > 0.0:
+            # The distinction a reader most needs: compilation is paid
+            # once per shape and survives in a persistent cache, so a
+            # run dominated by it will be far cheaper the second time,
+            # while one dominated by execution will not.
+            compile_share = 100.0 * compile_total / total if total else 0.0
+            logger.info(
+                "  compilation is %.0f%% of this run and is cached; "
+                "a repeat should cost about %.2fs",
+                compile_share,
+                total - compile_total,
+            )
+        logger.info("=" * 78)
 
 
 def _block_on(result):
@@ -133,7 +199,22 @@ def timed_stage(
             qualifier = " (dispatch only, not waited on)"
 
         elapsed = time.perf_counter() - started
-        logger.info("[stage] %s: %.3fs%s", name, elapsed, qualifier)
+
+        # Read compilation events now, before anything else compiles, so
+        # whatever JAX reports is attributable to this stage.
+        compile_seconds = log_compilations(logger, name)
+
+        if compile_seconds > 0.0:
+            logger.info(
+                "[stage] %s: %.3fs total, %.3fs compiling, %.3fs executing%s",
+                name,
+                elapsed,
+                compile_seconds,
+                max(0.0, elapsed - compile_seconds),
+                qualifier,
+            )
+        else:
+            logger.info("[stage] %s: %.3fs%s", name, elapsed, qualifier)
 
         if profile is not None:
-            profile.record(name, elapsed, detail)
+            profile.record(name, elapsed, detail, compile_seconds)

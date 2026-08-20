@@ -49,6 +49,7 @@ from .execution import (
 from .models import decode_latent, encode_prompt, predict_velocity
 from .telemetry import (
     RunProfile,
+    start_recording_compilations,
     timed_stage,
     describe_array,
     describe_tree,
@@ -147,6 +148,11 @@ class Pipeline:
         self._vae_config = vae_config or VaeDecoderConfig()
         self._sampling_config = sampling_config or SamplingConfig()
         self._execution_config = execution_config or ExecutionConfig()
+
+        if self._execution_config.enable_telemetry:
+            # Registered before anything is compiled, since JAX offers no
+            # way to recover events emitted before a listener exists.
+            start_recording_compilations()
 
         self._residency = resolve_residency_strategy(
             config.residency_strategy, jax.device_count()

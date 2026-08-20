@@ -573,6 +573,29 @@ callbacks serialise the program around them. Expect a generation to be
 several times slower with tracing on. Use the prefix filter: tracing
 everything in a twenty-block stack buries the line that matters.
 
+### A stage's wall time is meaningless until compilation is separated out
+
+This is the most important thing the telemetry does, and the reason it
+was built. A reported decode of 108 seconds might be 105 of compilation
+and 3 of work, or the reverse. Compilation is paid once per output
+shape and survives in a persistent cache; execution is paid on every
+image. The two call for opposite fixes, and a wall time cannot tell
+them apart.
+
+`src/telemetry/compilation.py` listens to the events JAX emits for every
+compilation, which carry the function name and per-phase durations, and
+every timed stage now reports its split automatically. The profile ends
+by stating what a cached repeat should cost.
+
+The three phases mean different things. Trace time grows with how much
+Python runs, so an unrolled loop pays it and a scan does not. Lowering
+grows with program size. Backend compilation is usually the largest and
+is what the persistent cache eliminates on later runs.
+
+Measured on CPU while building this: sampling was 97% compilation, and
+autoencoder decode was 97% execution. Two stages of comparable wall
+time, needing entirely different work.
+
 ### Timing JAX requires blocking, or it measures nothing
 
 JAX dispatch is asynchronous. A timer around a call measures how long

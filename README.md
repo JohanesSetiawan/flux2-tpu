@@ -209,6 +209,17 @@ execution, including once per block inside a scanned stack. It is off by
 default because each point is a host callback that serialises the
 program; expect a generation to be several times slower while it is on.
 
+Every timed stage also separates compilation from execution
+automatically, which is what distinguishes a stage that will be fast on
+a second run from one that will not:
+
+```
+  stage                            total   compile   share  detail
+  vae decode                      13.66s     0.37s   74.4%  precision highest
+  sampling                         4.71s     4.57s   25.6%  4 steps, fused, scanned blocks
+  compilation is 27% of this run and is cached; a repeat should cost about 13.43s
+```
+
 ## Contributing
 
 Read [AGENTS.md](AGENTS.md) first. It documents the architectural
