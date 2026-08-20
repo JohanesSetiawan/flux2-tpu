@@ -17,6 +17,7 @@ from ..blocks import transformer_layer
 from ..checkpoint import require_parameter
 from ..config import ExecutionConfig, TextEncoderConfig
 from ..layers import causal_padding_mask, rotary_frequency_table
+from ..telemetry.tracing import trace_tensor
 
 
 EMBEDDING_KEY = "weight"
@@ -126,7 +127,9 @@ def encode_prompt(
     )
     attention_bias = causal_padding_mask(token_is_real, sequence_length)
 
-    activations = embed_tokens(token_ids, parameters, config)
+    activations = trace_tensor(
+        "text_encoder.embeddings", embed_tokens(token_ids, parameters, config)
+    )
 
     # Hidden state k is the value after k layers have run, so the
     # embedding output is state zero.
@@ -141,8 +144,11 @@ def encode_prompt(
 
     if execution.use_scan_over_blocks:
         def run_one_layer(carry, layer_parameters):
-            output = transformer_layer(
-                carry, layer_parameters, rotary_cosine, rotary_sine, attention_bias, config
+            output = trace_tensor(
+                "text_encoder.layer",
+                transformer_layer(
+                    carry, layer_parameters, rotary_cosine, rotary_sine, attention_bias, config
+                ),
             )
             # Every layer's output is collected, because which depths
             # are needed is a configuration choice and a scan cannot
@@ -180,4 +186,6 @@ def encode_prompt(
     ordered_states = [
         selected_states[depth] for depth in config.hidden_states_output_layers
     ]
-    return jnp.concatenate(ordered_states, axis=-1)
+    return trace_tensor(
+        "text_encoder.conditioning", jnp.concatenate(ordered_states, axis=-1)
+    )

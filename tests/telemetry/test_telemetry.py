@@ -225,3 +225,174 @@ def run_telemetry_tests(logger: logging.Logger) -> None:
         test_function()
         logger.info("PASS: %s", test_function.__name__)
     logger.info("All telemetry tests passed")
+
+
+def _capture_stdout(action):
+    """Run something and return whatever it printed."""
+    import contextlib
+    import io
+
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        action()
+    return buffer.getvalue()
+
+
+def test_regression_tracing_is_silent_and_free_when_disabled() -> None:
+    """
+    A disabled trace point must emit nothing at all, not merely print
+    nothing. The flag is read at trace time, so the branch is resolved
+    while the program is built and no operation survives into the
+    compiled result.
+    """
+    from src.telemetry.tracing import disable_model_tracing, trace_tensor
+
+    disable_model_tracing()
+
+    @jax.jit
+    def traced(value):
+        return trace_tensor("anything", value) * 2
+
+    output = _capture_stdout(lambda: traced(jnp.ones((4,))).block_until_ready())
+
+    assert output == "", f"disabled tracing printed: {output!r}"
+
+
+def test_regression_tracing_reports_on_every_execution_not_once() -> None:
+    """
+    The whole reason for jax.debug.print rather than print.
+
+    A Python print inside a compiled function runs once, during
+    tracing, and never again. This asserts the trace point fires on each
+    call, which is what makes it usable for watching values change
+    across executions.
+    """
+    from src.telemetry.tracing import disable_model_tracing, enable_model_tracing, trace_tensor
+
+    enable_model_tracing()
+    try:
+
+        @jax.jit
+        def traced(value):
+            return trace_tensor("repeated", value)
+
+        def run_three_times():
+            for multiplier in (1.0, 2.0, 3.0):
+                traced(jnp.ones((2,)) * multiplier).block_until_ready()
+
+        output = _capture_stdout(run_three_times)
+    finally:
+        disable_model_tracing()
+
+    assert output.count("[trace] repeated") == 3, (
+        f"expected three reports, one per execution, got:\n{output}"
+    )
+
+
+def test_regression_tracing_fires_inside_a_scan() -> None:
+    """
+    Block stacks run under lax.scan, so a trace point that did not
+    survive into a scan body would report the stack once instead of
+    reporting each block, which is the case it is most needed for.
+    """
+    from src.telemetry.tracing import disable_model_tracing, enable_model_tracing, trace_tensor
+
+    enable_model_tracing()
+    try:
+
+        def body(carry, value):
+            return trace_tensor("scanned", carry + value), None
+
+        def run():
+            jax.lax.scan(body, jnp.float32(0), jnp.arange(4, dtype=jnp.float32))
+
+        output = _capture_stdout(run)
+    finally:
+        disable_model_tracing()
+
+    assert output.count("[trace] scanned") == 4, (
+        f"expected one report per scan iteration, got:\n{output}"
+    )
+
+
+def test_regression_prefix_filter_narrows_reporting() -> None:
+    """
+    Tracing a twenty-block stack unfiltered buries the one line that
+    matters, so narrowing must actually exclude non-matching labels.
+    """
+    from src.telemetry.tracing import disable_model_tracing, enable_model_tracing, trace_tensor
+
+    enable_model_tracing("model.wanted")
+    try:
+
+        def run():
+            trace_tensor("model.wanted.here", jnp.ones((2,)))
+            trace_tensor("model.other.here", jnp.ones((2,)))
+
+        output = _capture_stdout(run)
+    finally:
+        disable_model_tracing()
+
+    assert "model.wanted.here" in output
+    assert "model.other.here" not in output
+
+
+def test_regression_toggling_tracing_takes_effect_on_already_compiled_code() -> None:
+    """
+    Trace points are resolved when a function is traced, so a program
+    compiled with tracing off keeps it off for its lifetime. Without
+    clearing compiled programs, enabling tracing after a first call
+    would appear to do nothing, which reads as a broken feature rather
+    than a caching subtlety.
+    """
+    from src.telemetry.tracing import disable_model_tracing, enable_model_tracing, trace_tensor
+
+    @jax.jit
+    def traced(value):
+        return trace_tensor("toggled", value)
+
+    disable_model_tracing()
+    traced(jnp.ones((2,))).block_until_ready()  # compile with tracing off
+
+    enable_model_tracing()
+    try:
+        output = _capture_stdout(lambda: traced(jnp.ones((2,))).block_until_ready())
+    finally:
+        disable_model_tracing()
+
+    assert "[trace] toggled" in output, (
+        "enabling tracing did not affect an already compiled program; the "
+        "compilation caches may not be cleared on toggle"
+    )
+
+
+def test_regression_trace_statistics_promote_before_reducing() -> None:
+    """
+    Same rule as everywhere else in this codebase: reducing bfloat16 in
+    bfloat16 saturates. An array of ones must report a mean of one.
+    """
+    from src.telemetry.tracing import disable_model_tracing, enable_model_tracing, trace_tensor
+
+    enable_model_tracing()
+    try:
+        output = _capture_stdout(
+            lambda: trace_tensor("wide", jnp.ones((256, 256), dtype=jnp.bfloat16))
+        )
+    finally:
+        disable_model_tracing()
+
+    assert "mean=1.0000" in output, (
+        f"statistics may be accumulating in bfloat16: {output}"
+    )
+
+
+_TELEMETRY_TESTS.extend(
+    [
+        test_regression_tracing_is_silent_and_free_when_disabled,
+        test_regression_tracing_reports_on_every_execution_not_once,
+        test_regression_tracing_fires_inside_a_scan,
+        test_regression_prefix_filter_narrows_reporting,
+        test_regression_toggling_tracing_takes_effect_on_already_compiled_code,
+        test_regression_trace_statistics_promote_before_reducing,
+    ]
+)

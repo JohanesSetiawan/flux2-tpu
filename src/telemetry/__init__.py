@@ -27,6 +27,14 @@ from .arrays import (
 )
 from .devices import DeviceMemory, log_memory_snapshot, log_platform, read_device_memory
 from .stages import RunProfile, StageRecord, timed_stage
+from .tracing import (
+    disable_model_tracing,
+    enable_model_tracing,
+    is_tracing_enabled,
+    trace_finite,
+    trace_parameters,
+    trace_tensor,
+)
 
 __all__ = [
     "ArrayDescription",
@@ -35,6 +43,12 @@ __all__ = [
     "StageRecord",
     "TreeDescription",
     "describe_array",
+    "disable_model_tracing",
+    "enable_model_tracing",
+    "is_tracing_enabled",
+    "trace_finite",
+    "trace_parameters",
+    "trace_tensor",
     "describe_tree",
     "format_bytes",
     "log_memory_snapshot",

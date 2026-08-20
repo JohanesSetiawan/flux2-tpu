@@ -190,6 +190,25 @@ independently implemented oracles, swept across a matrix of shapes
 generated at run time rather than compared against stored golden
 arrays.
 
+## Debugging
+
+Per-stage timings, tensor placements and accelerator memory are logged
+automatically. To also watch individual tensors from inside the compiled
+model:
+
+```python
+from src.telemetry import enable_model_tracing, disable_model_tracing
+
+enable_model_tracing("transformer")   # or "vae", "text_encoder", or "" for all
+image = pipeline.generate(request)
+disable_model_tracing()
+```
+
+Each trace point reports shape, dtype and value statistics on every
+execution, including once per block inside a scanned stack. It is off by
+default because each point is a host callback that serialises the
+program; expect a generation to be several times slower while it is on.
+
 ## Contributing
 
 Read [AGENTS.md](AGENTS.md) first. It documents the architectural

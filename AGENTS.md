@@ -550,6 +550,29 @@ clone only if missing, always set both the directory and the import
 path, and import `src` immediately so a failure surfaces there rather
 than three cells later.
 
+### Debugging inside compiled code needs jax.debug, not print
+
+A Python `print` inside a jit region executes once, while the function
+is traced, and never again during the thousands of times the compiled
+program runs. It looks like per-call reporting and is not.
+
+`src/telemetry/tracing.py` uses `jax.debug.print`, which emits a real
+operation calling back to the host on every execution and survives into
+a `lax.scan` body, so a scanned twenty-block stack reports twenty times
+rather than once. Trace points are already placed throughout the three
+models.
+
+Turn it on with `enable_model_tracing("prefix")` and off with
+`disable_model_tracing()`. Both clear JAX's compilation caches, and they
+must: trace points are resolved at trace time, so a program already
+compiled with tracing off would otherwise keep it off and the feature
+would appear broken.
+
+It is off by default because every trace point is a host callback, and
+callbacks serialise the program around them. Expect a generation to be
+several times slower with tracing on. Use the prefix filter: tracing
+everything in a twenty-block stack buries the line that matters.
+
 ### Timing JAX requires blocking, or it measures nothing
 
 JAX dispatch is asynchronous. A timer around a call measures how long

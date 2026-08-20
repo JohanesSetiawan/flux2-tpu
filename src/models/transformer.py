@@ -37,6 +37,7 @@ from ..blocks.modulation import (
 )
 from ..checkpoint import require_parameter, select_parameter_group
 from ..config import ExecutionConfig, TransformerConfig
+from ..telemetry.tracing import trace_tensor
 from ..layers import (
     axial_rotation_table,
     build_position_identifiers,
@@ -256,6 +257,10 @@ def _run_double_blocks(
             text_modulation,
             config,
         )
+        # Traced inside the scan body, so each block reports separately
+        # rather than the stack reporting once.
+        image = trace_tensor("transformer.double_block.image", image)
+        text = trace_tensor("transformer.double_block.text", text)
         # Nothing is collected per block, so the second element is None.
         return (image, text), None
 
@@ -288,12 +293,10 @@ def _run_single_blocks(
         return activations
 
     def run_one_block(carry, block_parameters):
-        return (
-            single_stream_block(
-                carry, block_parameters, cosine_table, sine_table, modulation, config
-            ),
-            None,
+        activations = single_stream_block(
+            carry, block_parameters, cosine_table, sine_table, modulation, config
         )
+        return trace_tensor("transformer.single_block", activations), None
 
     activations, _ = jax.lax.scan(run_one_block, activations, block_group)
     return activations
@@ -369,20 +372,33 @@ def predict_velocity(
     # inside the block body stops the program from compiling at all.
     compute_dtype = latent_tokens.dtype
 
-    image_activations = jnp.matmul(
-        latent_tokens,
-        require_parameter(global_parameters, LATENT_PROJECTION_KEY, "predict_velocity"),
-        precision=precision,
-    ).astype(compute_dtype)
-    text_activations = jnp.matmul(
-        conditioning.astype(compute_dtype),
-        require_parameter(global_parameters, CONDITIONING_PROJECTION_KEY, "predict_velocity"),
-        precision=precision,
-    ).astype(compute_dtype)
+    trace_tensor("transformer.input.latent", latent_tokens)
+    trace_tensor("transformer.input.conditioning", conditioning)
+    trace_tensor("transformer.input.timesteps", timesteps)
 
-    conditioning_vector = compute_conditioning_vector(
-        timesteps.astype(compute_dtype), global_parameters, config
-    ).astype(compute_dtype)
+    image_activations = trace_tensor(
+        "transformer.embed.image",
+        jnp.matmul(
+            latent_tokens,
+            require_parameter(global_parameters, LATENT_PROJECTION_KEY, "predict_velocity"),
+            precision=precision,
+        ).astype(compute_dtype),
+    )
+    text_activations = trace_tensor(
+        "transformer.embed.text",
+        jnp.matmul(
+            conditioning.astype(compute_dtype),
+            require_parameter(global_parameters, CONDITIONING_PROJECTION_KEY, "predict_velocity"),
+            precision=precision,
+        ).astype(compute_dtype),
+    )
+
+    conditioning_vector = trace_tensor(
+        "transformer.timestep_vector",
+        compute_conditioning_vector(
+            timesteps.astype(compute_dtype), global_parameters, config
+        ).astype(compute_dtype),
+    )
     image_modulation, text_modulation, single_modulation = compute_all_modulation(
         conditioning_vector, global_parameters, config
     )
@@ -422,6 +438,9 @@ def predict_velocity(
     # were conditioning and are dropped here.
     image_activations = activations[:, num_text_tokens:]
 
-    return _apply_final_layer(
-        image_activations, conditioning_vector, global_parameters, config
+    return trace_tensor(
+        "transformer.output.velocity",
+        _apply_final_layer(
+            image_activations, conditioning_vector, global_parameters, config
+        ),
     )

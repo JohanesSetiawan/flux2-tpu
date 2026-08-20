@@ -29,6 +29,7 @@ import numpy as np
 
 from ..blocks import attention_block, residual_block
 from ..checkpoint import require_parameter, select_parameter_group
+from ..telemetry.tracing import trace_tensor
 from ..config import VaeDecoderConfig
 from ..layers import (
     convolution_2d,
@@ -320,17 +321,28 @@ def decode_latent(
     """
     decoder_parameters = vae_parameters["decoder"]
 
+    trace_tensor("vae.input.latent", latent)
+
     activations = denormalize_latent(latent, vae_parameters["latent_denormalize"])
+    activations = trace_tensor("vae.denormalized", activations)
+
     activations = unpack_latent_patches(activations, config)
     activations = apply_post_quantization_projection(
         activations, vae_parameters["post_quant_conv"]
     )
+    activations = trace_tensor("vae.unpacked", activations)
 
     activations = _apply_named_convolution(
         activations, decoder_parameters, STEM_CONVOLUTION_PREFIX, config
     )
-    activations = _run_middle_section(activations, decoder_parameters, config)
-    activations = _run_upsample_levels(activations, decoder_parameters, config)
+    activations = trace_tensor("vae.stem", activations)
+
+    activations = trace_tensor(
+        "vae.middle", _run_middle_section(activations, decoder_parameters, config)
+    )
+    activations = trace_tensor(
+        "vae.upsampled", _run_upsample_levels(activations, decoder_parameters, config)
+    )
 
     output_scale = require_parameter(
         decoder_parameters, f"{OUTPUT_NORM_PREFIX}_{WEIGHT_SUFFIX}", OUTPUT_NORM_PREFIX
@@ -341,6 +353,9 @@ def decode_latent(
     activations = group_normalization(activations, output_scale, output_shift, config.layer)
     activations = sigmoid_linear_unit(activations)
 
-    return _apply_named_convolution(
-        activations, decoder_parameters, OUTPUT_CONVOLUTION_PREFIX, config
+    return trace_tensor(
+        "vae.output.image",
+        _apply_named_convolution(
+            activations, decoder_parameters, OUTPUT_CONVOLUTION_PREFIX, config
+        ),
     )
