@@ -23,7 +23,12 @@ import jax.numpy as jnp
 import numpy as np
 from jax.sharding import NamedSharding, PartitionSpec
 
-from .checkpoint import download_bundle, resolve_huggingface_token, restore_component
+from .checkpoint import (
+    download_bundle,
+    resolve_huggingface_token,
+    restore_component,
+    restore_component_with_sharding,
+)
 from contextlib import contextmanager
 
 from .config import (
@@ -63,7 +68,7 @@ from .sampling import (
     pack_latent_to_tokens,
     unpack_tokens_to_latent,
 )
-from .tokenization import load_tokenizer, tokenize_prompts
+from .tokenization import load_tokenizer, preload_tokenizer_library, tokenize_prompts
 
 
 # The latent grid is coarser than the image by this factor: the
@@ -229,10 +234,24 @@ class Pipeline:
         token = resolve_huggingface_token(
             self._logger, source.huggingface_token_environment_variable
         )
+        # Started before the download so the two overlap. Both are
+        # waiting rather than computing, so neither slows the other.
+        tokenizer_import = (
+            preload_tokenizer_library(self._logger)
+            if self._execution_config.preload_tokenizer_during_download
+            else None
+        )
+
         with self._stage("download bundle", load_profile):
             self._bundle_path = download_bundle(source, self._logger, token)
 
         with self._stage("load tokenizer", load_profile):
+            if tokenizer_import is not None:
+                # Joining rather than assuming the import finished: if
+                # the download was fast, the import may still be running,
+                # and racing it would only move the wait somewhere less
+                # visible.
+                tokenizer_import.join()
             self._tokenizer = load_tokenizer(self._bundle_path, self._logger)
 
         for component_name, attribute in (
@@ -241,7 +260,14 @@ class Pipeline:
             ("vae", "_vae_parameters"),
         ):
             with self._stage(f"restore {component_name}", load_profile) as holder:
-                parameters = restore_component(self._bundle_path, component_name, self._logger)
+                if self._execution_config.restore_directly_onto_devices:
+                    parameters = restore_component_with_sharding(
+                        self._bundle_path, component_name, jax.devices()[0], self._logger
+                    )
+                else:
+                    parameters = restore_component(
+                        self._bundle_path, component_name, self._logger
+                    )
                 setattr(self, attribute, holder.set(parameters))
             self._describe_component(component_name, parameters)
 

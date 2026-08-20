@@ -594,6 +594,27 @@ Any new model entry point must be wrapped the same way. The symptom to
 watch for in a profile is a compilation list naming primitive
 operations rather than one entry per model.
 
+### Measured results of the jit fix, for calibration
+
+Wrapping the model entry points in jax.jit, measured on Colab v5e-1 at
+1024x1024:
+
+| | before | after |
+|---|---|---|
+| decode programs compiled | 35 | 17 |
+| decode, steady state | 1.65s | 0.53s |
+| decode compile per call | 0.80s | none |
+| generation, new prompt | 6.10s | 4.85s |
+| generation, cached prompt | 3.70s | 2.31s |
+
+Note what did **not** move: the one-off decode compile stayed near 84
+seconds. It is now a single `jit(decode_latent)` rather than thirty-five
+fragments, but XLA still needs that long to compile a full-resolution
+convolutional decoder in float32. That cost belongs to the persistent
+compilation cache, not to further restructuring, which makes putting
+the cache somewhere durable the highest-value remaining change on
+Colab.
+
 ### The tokenizer import can cost more than the model load
 
 `transformers` selects a deep learning backend when first imported, and
@@ -606,6 +627,13 @@ pure Python and Rust and needs no backend.
 must be set before transformers is first imported anywhere in the
 process, which is why it sits at the import site rather than in a
 configuration object.
+
+That alone did not help: a later run still spent 56 seconds there. The
+import is simply expensive on a cold, network-backed filesystem,
+whatever backend it selects. So the import now runs on a background
+thread during the download instead. Both are waiting rather than
+computing, so overlapping them removes the cost entirely rather than
+reducing it.
 
 ### A stage's wall time is meaningless until compilation is separated out
 

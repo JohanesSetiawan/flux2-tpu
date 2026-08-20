@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -174,3 +175,34 @@ def tokenize_prompts(
             )
 
     return TokenizedPrompt(token_ids=token_ids, token_is_real=token_is_real)
+
+
+def preload_tokenizer_library(logger: logging.Logger) -> threading.Thread:
+    """
+    Begin importing the tokenizer library on a background thread.
+
+    Importing transformers costs tens of seconds, and on a cold machine
+    that is comparable to downloading the checkpoint. Both are waiting
+    rather than computing, so they can overlap: start the import, let
+    the download proceed, and by the time a tokenizer is wanted the
+    import has usually finished.
+
+    Returns the thread so a caller can join it before first use. Joining
+    is not optional: without it the first tokenizer call would race the
+    import, and Python would serialise them anyway but with the wait
+    moved somewhere less obvious.
+    """
+    def run_import() -> None:
+        os.environ.setdefault(BACKEND_SELECTION_VARIABLE, BACKEND_DISABLED_VALUE)
+        try:
+            import transformers  # noqa: F401
+        except ImportError:
+            # Reported when the tokenizer is actually needed, with a
+            # message explaining what to install. Failing here, on a
+            # background thread, would surface at a confusing moment.
+            pass
+
+    logger.info("Importing the tokenizer library in the background")
+    thread = threading.Thread(target=run_import, name="tokenizer-import", daemon=True)
+    thread.start()
+    return thread

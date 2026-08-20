@@ -543,3 +543,45 @@ def _recorded_since(logger):
 
 
 _TELEMETRY_TESTS.append(test_regression_jitting_an_entry_point_collapses_program_count)
+
+
+def test_regression_tokenizer_preload_returns_a_joinable_thread() -> None:
+    """
+    The preload must be joinable, not fire-and-forget.
+
+    Without joining, the first tokenizer call races the import. Python
+    would serialise them anyway, but the wait would move from a stage
+    that names it to one that does not, which is worse than not
+    overlapping at all.
+    """
+    from src.tokenization import preload_tokenizer_library
+
+    thread = preload_tokenizer_library(_silent_logger())
+
+    assert thread.daemon, "the import thread should not keep the process alive"
+    thread.join(timeout=120)
+    assert not thread.is_alive(), "the import thread did not finish"
+
+
+def test_regression_tokenizer_preload_disables_the_torch_backend() -> None:
+    """
+    transformers imports a deep learning backend on first use, and on a
+    machine with PyTorch installed that is the bulk of the cost for a
+    tokenizer that needs no backend at all.
+    """
+    import os
+
+    from src.tokenization.prompt import BACKEND_DISABLED_VALUE, BACKEND_SELECTION_VARIABLE
+    from src.tokenization import preload_tokenizer_library
+
+    preload_tokenizer_library(_silent_logger()).join(timeout=120)
+
+    assert os.environ.get(BACKEND_SELECTION_VARIABLE) == BACKEND_DISABLED_VALUE
+
+
+_TELEMETRY_TESTS.extend(
+    [
+        test_regression_tokenizer_preload_returns_a_joinable_thread,
+        test_regression_tokenizer_preload_disables_the_torch_backend,
+    ]
+)

@@ -70,6 +70,33 @@ class ExecutionConfig:
     # less than the overlap it costs.
     enable_telemetry: bool = True
 
+    # Restore parameters directly onto their target devices instead of
+    # restoring first and placing afterwards.
+    #
+    # The theory is sound: the two-step path moves every byte twice,
+    # which for the diffusion transformer is a redundant 7.2 GB copy.
+    # The evidence is not. Measured on CPU it came out slower, roughly
+    # 3.4 seconds against 1.4, presumably because placement there is
+    # nearly free and the metadata read is not.
+    #
+    # It is therefore off by default rather than shipped as an
+    # improvement on the strength of an argument. Whether it helps
+    # depends on how expensive placement actually is, which differs
+    # between a single chip, where the second copy may be elided
+    # entirely, and a pod, where restoring to one device and then
+    # replicating to eight is a real cost. Turn it on and compare the
+    # restore stage in the profile.
+    restore_directly_onto_devices: bool = False
+
+    # Import the tokenizer library on a background thread while the
+    # checkpoint downloads.
+    #
+    # The import costs around 55 seconds on Colab, against a download of
+    # around 99. Run in sequence that is 154 seconds; overlapped, the
+    # import disappears into the download entirely. It is pure waiting
+    # on both sides, so there is nothing to contend over.
+    preload_tokenizer_during_download: bool = True
+
     # Also read back and summarise each stage's output values.
     #
     # Off by default because it forces a copy from the accelerator to

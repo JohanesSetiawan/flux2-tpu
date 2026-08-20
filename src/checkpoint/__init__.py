@@ -23,7 +23,11 @@ from .parameters import (
     require_parameter,
     select_parameter_group,
 )
-from .restore import component_metadata, restore_component
+from .restore import (
+    component_metadata,
+    restore_component,
+    restore_component_with_sharding,
+)
 
 __all__ = [
     "MANIFEST_FILE_NAME",
@@ -38,6 +42,7 @@ __all__ = [
     "require_parameter",
     "resolve_huggingface_token",
     "restore_component",
+    "restore_component_with_sharding",
     "select_parameter_group",
     "validate_component_name",
 ]

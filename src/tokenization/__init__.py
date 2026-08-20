@@ -10,7 +10,13 @@ tensor of exactly the right shape, carrying different content.
 from .prompt import (
     TokenizedPrompt,
     load_tokenizer,
+    preload_tokenizer_library,
     tokenize_prompts,
 )
 
-__all__ = ["TokenizedPrompt", "load_tokenizer", "tokenize_prompts"]
+__all__ = [
+    "TokenizedPrompt",
+    "load_tokenizer",
+    "preload_tokenizer_library",
+    "tokenize_prompts",
+]
