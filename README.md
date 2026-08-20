@@ -130,6 +130,10 @@ src/
 │   ├── residency.py       which components stay in accelerator memory
 │   ├── sharding.py        splitting parameters across devices
 │   └── compilation.py     persistent compilation cache
+├── telemetry/         run instrumentation, never semantics
+│   ├── stages.py          blocking-aware stage timing and profiles
+│   ├── arrays.py          tensor shape, dtype, size and placement
+│   └── devices.py         platform and accelerator memory
 ├── tokenization/      prompt text to padded token identifiers
 │   └── prompt.py
 ├── interfaces/        front ends, wiring only

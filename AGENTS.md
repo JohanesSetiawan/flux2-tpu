@@ -197,6 +197,10 @@ src/
 │   ├── residency.py       which components stay in accelerator memory
 │   ├── sharding.py        splitting parameters across devices
 │   └── compilation.py     persistent compilation cache
+├── telemetry/         run instrumentation, never semantics
+│   ├── stages.py          blocking-aware stage timing and profiles
+│   ├── arrays.py          tensor shape, dtype, size and placement
+│   └── devices.py         platform and accelerator memory
 ├── tokenization/      prompt text to padded token identifiers
 │   └── prompt.py
 ├── interfaces/        front ends, wiring only
@@ -545,6 +549,40 @@ re-download everything. The bootstrap cell is therefore idempotent:
 clone only if missing, always set both the directory and the import
 path, and import `src` immediately so a failure surfaces there rather
 than three cells later.
+
+### Timing JAX requires blocking, or it measures nothing
+
+JAX dispatch is asynchronous. A timer around a call measures how long
+the call took to queue, not how long the work took. Measured on this
+codebase: a matrix multiply taking 186ms reports 0.14ms if the timer
+does not wait for its result.
+
+`timed_stage` therefore blocks on whatever a stage produces before
+stopping the clock, and marks any stage that handed nothing back as
+"dispatch only" so its number is not mistaken for real work. This does
+cost the overlap JAX would otherwise get between stages; across a
+handful of coarse stages that is a good trade for numbers that can be
+trusted.
+
+### Telemetry statistics must promote before reducing
+
+`summarise_values` casts to float32 before computing a mean. Summing
+bfloat16 in bfloat16 saturates, and an early version reported an array
+of ones as having a mean near zero. That is worse than no summary: it
+sends a reader hunting for a bug in the stage being described rather
+than in the description.
+
+This is the third time the same class of bug has appeared here, after
+group normalization and attention scores. When adding any reduction,
+promote first.
+
+### Single-device placement is not sharding
+
+`describe_tree` counts only genuinely split leaves as sharded. An array
+sitting on one device reports "single device", which is a distinct and
+important state: it is what an unplaced parameter looks like, and
+conflating it with a replicated or split one is how the autoencoder came
+to run on one chip of an eight-chip pod unnoticed for an entire phase.
 
 ### Precision levels are untestable on CPU
 

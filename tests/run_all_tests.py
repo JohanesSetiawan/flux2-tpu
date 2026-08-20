@@ -45,6 +45,7 @@ from tests.models.test_transformer import run_transformer_tests
 from tests.execution.test_execution import run_execution_tests
 from tests.interfaces.test_interfaces import run_interface_tests
 from tests.sampling.test_sampling import run_sampling_tests
+from tests.telemetry.test_telemetry import run_telemetry_tests
 from tests.models.test_vae import run_vae_tests
 
 
@@ -66,6 +67,7 @@ TEST_SUITES = (
     ("sampling", run_sampling_tests),
     ("execution", run_execution_tests),
     ("interfaces", run_interface_tests),
+    ("telemetry", run_telemetry_tests),
 )
 
 

@@ -24,6 +24,8 @@ import numpy as np
 from jax.sharding import NamedSharding, PartitionSpec
 
 from .checkpoint import download_bundle, resolve_huggingface_token, restore_component
+from contextlib import contextmanager
+
 from .config import (
     ExecutionConfig,
     InferenceConfig,
@@ -45,6 +47,15 @@ from .execution import (
     shard_stacked_blocks,
 )
 from .models import decode_latent, encode_prompt, predict_velocity
+from .telemetry import (
+    RunProfile,
+    timed_stage,
+    describe_array,
+    describe_tree,
+    log_memory_snapshot,
+    log_platform,
+    summarise_values,
+)
 from .sampling import (
     compute_sigma_schedule,
     denoise_latent,
@@ -66,6 +77,27 @@ PACKED_LATENT_CHANNELS = 128
 # unit range is the last step before an image can be written out.
 DECODER_OUTPUT_MINIMUM = -1.0
 DECODER_OUTPUT_MAXIMUM = 1.0
+
+class _UntimedStage:
+    """
+    Stands in for a timed stage when telemetry is disabled.
+
+    Mirrors the timed version's interface, including the result holder,
+    so call sites do not branch. Deliberately does not block, since
+    without telemetry there is no measurement to protect and the overlap
+    is worth keeping.
+    """
+
+    class _Holder:
+        def set(self, value):
+            return value
+
+    def __enter__(self):
+        return self._Holder()
+
+    def __exit__(self, *exception_details):
+        return False
+
 
 # Used only to trigger compilation. Content is irrelevant, since
 # compilation depends on shapes rather than values, but it must be
@@ -162,20 +194,29 @@ class Pipeline:
         multi-gigabyte work happens, which matters in a notebook where
         construction and use sit in different cells.
         """
+        load_profile = RunProfile()
+        if self._execution_config.enable_telemetry:
+            log_platform(self._logger)
+
         source = self._config.checkpoint_source
         token = resolve_huggingface_token(
             self._logger, source.huggingface_token_environment_variable
         )
-        self._bundle_path = download_bundle(source, self._logger, token)
+        with self._stage("download bundle", load_profile):
+            self._bundle_path = download_bundle(source, self._logger, token)
 
-        self._tokenizer = load_tokenizer(self._bundle_path, self._logger)
-        self._text_encoder_parameters = restore_component(
-            self._bundle_path, "text_encoder", self._logger
-        )
-        self._transformer_parameters = restore_component(
-            self._bundle_path, "transformer", self._logger
-        )
-        self._vae_parameters = restore_component(self._bundle_path, "vae", self._logger)
+        with self._stage("load tokenizer", load_profile):
+            self._tokenizer = load_tokenizer(self._bundle_path, self._logger)
+
+        for component_name, attribute in (
+            ("text_encoder", "_text_encoder_parameters"),
+            ("transformer", "_transformer_parameters"),
+            ("vae", "_vae_parameters"),
+        ):
+            with self._stage(f"restore {component_name}", load_profile) as holder:
+                parameters = restore_component(self._bundle_path, component_name, self._logger)
+                setattr(self, attribute, holder.set(parameters))
+            self._describe_component(component_name, parameters)
 
         configure_compilation_cache(self._execution_config, self._logger)
 
@@ -211,7 +252,43 @@ class Pipeline:
                 self._text_encoder_parameters, self._logger, "text_encoder"
             )
 
+        if self._execution_config.enable_telemetry:
+            for component_name, parameters in (
+                ("transformer", self._transformer_parameters),
+                ("vae", self._vae_parameters),
+                ("text_encoder", self._text_encoder_parameters),
+            ):
+                self._describe_component(f"{component_name} after placement", parameters)
+            log_memory_snapshot(self._logger, "loading")
+            load_profile.log_summary(self._logger, "Load profile")
+
         self._logger.info("All components loaded")
+
+    def _stage(self, name: str, profile: RunProfile | None = None, detail: str = ""):
+        """
+        Time a stage, or run it untimed when telemetry is off.
+
+        Returns a context manager either way, so call sites read the
+        same in both cases rather than branching around the
+        instrumentation.
+        """
+        if not self._execution_config.enable_telemetry:
+            return _UntimedStage()
+        return timed_stage(self._logger, name, profile, detail)
+
+    def _describe_component(self, label: str, parameters) -> None:
+        """Record a component's size, dtypes and placement."""
+        if not self._execution_config.enable_telemetry:
+            return
+        self._logger.info("  %s: %s", label, describe_tree(parameters).format())
+
+    def _describe_tensor(self, label: str, array) -> None:
+        """Record one intermediate tensor, and its values at high verbosity."""
+        if not self._execution_config.enable_telemetry:
+            return
+        self._logger.info("  %s: %s", label, describe_array(array).format())
+        if self._execution_config.enable_value_summaries:
+            self._logger.info("    values: %s", summarise_values(array))
 
     def _text_encoder_is_resident(self) -> bool:
         return next(
@@ -347,18 +424,30 @@ class Pipeline:
             "Generating %s, seed %d", resolution.label, request.seed
         )
 
-        conditioning = self.encode(request.prompt)
+        profile = RunProfile()
+
+        with self._stage("text encode", profile, request.prompt[:40]) as holder:
+            conditioning = holder.set(self.encode(request.prompt))
+        self._describe_tensor("conditioning", conditioning)
 
         noise, latent_height, latent_width = self._initial_noise(resolution, request.seed)
         latent_tokens = pack_latent_to_tokens(noise)
+        self._describe_tensor("initial latent tokens", latent_tokens)
 
         sigma_schedule = compute_sigma_schedule(
             resolution.image_tokens, self._sampling_config
         )
         self._logger.info(
-            "Schedule over %d image tokens: %s",
+            "  schedule over %d image tokens: %s",
             resolution.image_tokens,
             np.array2string(sigma_schedule, precision=4),
+        )
+        self._logger.info(
+            "  latent grid %dx%d, %d image tokens against %d text tokens",
+            latent_height,
+            latent_width,
+            resolution.image_tokens,
+            conditioning.shape[1],
         )
 
         def velocity_at(tokens: jnp.ndarray, timesteps: jnp.ndarray) -> jnp.ndarray:
@@ -373,16 +462,42 @@ class Pipeline:
                 self._execution_config,
             )
 
-        denoised_tokens = denoise_latent(
-            latent_tokens, sigma_schedule, velocity_at, self._logger, self._execution_config
+        sampling_detail = (
+            f"{self._sampling_config.num_steps} steps, "
+            f"{'fused' if self._execution_config.fuse_sampling_steps else 'stepped'}, "
+            f"{'scanned' if self._execution_config.use_scan_over_blocks else 'unrolled'} blocks"
         )
+        with self._stage("sampling", profile, sampling_detail) as holder:
+            denoised_tokens = holder.set(
+                denoise_latent(
+                    latent_tokens,
+                    sigma_schedule,
+                    velocity_at,
+                    self._logger,
+                    self._execution_config,
+                )
+            )
+        self._describe_tensor("denoised latent tokens", denoised_tokens)
 
         latent = unpack_tokens_to_latent(denoised_tokens, latent_height, latent_width)
 
-        self._logger.info("Decoding latent to image")
-        decoded = decode_latent(latent, self._vae_parameters, self._vae_config)
+        decode_detail = f"precision {self._vae_config.layer.precision.value}"
+        with self._stage("vae decode", profile, decode_detail) as holder:
+            decoded = holder.set(
+                decode_latent(latent, self._vae_parameters, self._vae_config)
+            )
+        self._describe_tensor("decoded image", decoded)
 
-        return to_display_range(np.asarray(decoded[0]))
+        with self._stage("copy to host", profile) as holder:
+            image = to_display_range(np.asarray(decoded[0]))
+
+        if self._execution_config.enable_telemetry:
+            log_memory_snapshot(self._logger, "generation")
+            profile.log_summary(
+                self._logger, f"Generation profile ({resolution.label}, seed {request.seed})"
+            )
+
+        return image
 
 
 def to_display_range(decoded: np.ndarray) -> np.ndarray:

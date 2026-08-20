@@ -58,3 +58,24 @@ class ExecutionConfig:
     # Minimum compilation time before a program is worth caching. Very
     # short compilations cost more to store and reload than to repeat.
     compilation_cache_minimum_seconds: float = 1.0
+
+    # Record a per-stage timing profile, tensor placements and device
+    # memory for every run.
+    #
+    # On by default. The cost is a few log lines and, more importantly,
+    # the loss of overlap between stages: accurate timing requires
+    # waiting for each stage's result, which prevents JAX from running
+    # the next one early. Across a handful of coarse stages that
+    # overlap is small, and a profile that cannot be trusted is worth
+    # less than the overlap it costs.
+    enable_telemetry: bool = True
+
+    # Also read back and summarise each stage's output values.
+    #
+    # Off by default because it forces a copy from the accelerator to
+    # the host for tensors that would otherwise stay put, which is
+    # genuinely expensive at full resolution. Turn it on when a stage is
+    # suspected of producing something numerically wrong, since it is
+    # the fastest way to find which stage first emits a non-finite
+    # value.
+    enable_value_summaries: bool = False
