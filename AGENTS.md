@@ -659,8 +659,9 @@ any ratio. More importantly, a hand-written list encodes today's
 implementation choices into the artifact: whoever wants a different
 loader later finds the bundle already decided against them.
 
-See `conversion/README.md`. The same applies to any directory a future
-bundle carries.
+The same applies to any directory a future bundle carries. The
+converter itself lives outside this repository, but this is the one
+decision from it worth carrying forward.
 
 ### The chat template lives in one of two places
 
@@ -759,6 +760,30 @@ Related wording fix: a stage that hands nothing back to the timer may
 still block internally. The label says the timer did not wait, not that
 the work was unawaited, because the earlier phrasing appeared in a
 Kaggle log beside a stage that did block on its own.
+
+### The compilation cache is silent about whether it worked
+
+A cache that misses behaves exactly like no cache: nothing fails,
+nothing warns, the run is simply slow again. `warm_up` therefore
+snapshots the cache directory before compiling and reports afterwards
+what was reused and what had to be built, inferred from which entries
+appeared. XLA exposes no hit counter, but a program that compiled left
+a file behind and one that did not, did not.
+
+What an entry contains is compiled machine code, not metadata: one
+decode program is about 16 MB compressed, 78 MB expanded, and carries
+the paths of the source files it came from. Three things decide whether
+it is found again: the traced graph, which includes parameter sharding
+so a placement change invalidates entries; the jaxlib version; and the
+chip generation and topology.
+
+A miss costs only time. It cannot corrupt anything.
+
+Seeding from a read-only location needs a copy first. `/kaggle/input` is
+read-only, and XLA needs somewhere writable for programs it compiles
+later, so pointing the cache directly at a dataset would let it read but
+never write, and anything not already present would recompile on every
+run.
 
 ### Timing JAX requires blocking, or it measures nothing
 

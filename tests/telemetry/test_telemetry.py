@@ -21,6 +21,7 @@ description of it.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 import time
 
 import jax
@@ -665,5 +666,78 @@ _TELEMETRY_TESTS.extend(
         test_regression_compilation_does_not_leak_across_stage_boundaries,
         test_regression_reported_compilation_never_exceeds_wall_time,
         test_regression_unwaited_stage_label_does_not_claim_the_work_was_unawaited,
+    ]
+)
+
+
+def test_regression_cache_report_distinguishes_hit_from_miss() -> None:
+    """
+    A cache that misses behaves exactly like no cache: nothing fails,
+    nothing warns, the run is simply slow again. On a platform where
+    reaching a session costs minutes, that difference must be stated
+    rather than inferred from a stopwatch.
+    """
+    from src.telemetry import CacheContents, report_cache_effect
+
+    messages: list[str] = []
+
+    class CapturingLogger:
+        def info(self, message, *arguments):
+            messages.append(message % arguments if arguments else message)
+
+    populated = CacheContents(entry_names=frozenset({"jit_decode-abc-cache"}), total_bytes=100)
+
+    report_cache_effect(populated, populated, CapturingLogger())
+    assert any("hit for every program" in line for line in messages)
+
+    messages.clear()
+    grown = CacheContents(
+        entry_names=populated.entry_names | {"jit_scan-def-cache"}, total_bytes=200
+    )
+    report_cache_effect(populated, grown, CapturingLogger())
+    joined = "\n".join(messages)
+    assert "partially reused" in joined
+    assert "jit_scan" in joined, "the report should name what had to be compiled"
+
+
+def test_regression_cache_report_handles_a_first_run() -> None:
+    """
+    An empty cache is the normal first-run state, not an error, and the
+    report should say what the next run gains rather than warning.
+    """
+    from src.telemetry import CacheContents, report_cache_effect
+
+    messages: list[str] = []
+
+    class CapturingLogger:
+        def info(self, message, *arguments):
+            messages.append(message % arguments if arguments else message)
+
+    report_cache_effect(
+        CacheContents(frozenset(), 0),
+        CacheContents(frozenset({"jit_decode-abc-cache"}), 500),
+        CapturingLogger(),
+    )
+
+    assert any("next run" in line for line in messages)
+
+
+def test_regression_missing_cache_directory_reads_as_empty() -> None:
+    """
+    No cache configured and an empty cache lead to the same behaviour,
+    so a caller comparing before against after should not have to
+    special-case the first run.
+    """
+    from src.telemetry import read_cache_contents
+
+    assert read_cache_contents(None).entry_count == 0
+    assert read_cache_contents(Path("/nonexistent/cache")).entry_count == 0
+
+
+_TELEMETRY_TESTS.extend(
+    [
+        test_regression_cache_report_distinguishes_hit_from_miss,
+        test_regression_cache_report_handles_a_first_run,
+        test_regression_missing_cache_directory_reads_as_empty,
     ]
 )

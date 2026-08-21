@@ -25,6 +25,7 @@ from .arrays import (
     format_bytes,
     summarise_values,
 )
+from .cache import CacheContents, read_cache_contents, report_cache_effect
 from .compilation import (
     CompilationRecord,
     describe_compiled_program,
@@ -45,7 +46,10 @@ from .tracing import (
 
 __all__ = [
     "ArrayDescription",
+    "CacheContents",
     "CompilationRecord",
+    "read_cache_contents",
+    "report_cache_effect",
     "DeviceMemory",
     "describe_compiled_program",
     "discard_pending_compilations",

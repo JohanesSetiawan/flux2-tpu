@@ -55,6 +55,8 @@ from .execution import (
 from .models import decode_latent, encode_prompt, predict_velocity
 from .telemetry import (
     RunProfile,
+    read_cache_contents,
+    report_cache_effect,
     format_bytes,
     start_recording_compilations,
     timed_stage,
@@ -486,6 +488,15 @@ class Pipeline:
         self._require_loaded()
         buckets = buckets or self._config.resolution_buckets
 
+        # Snapshot the cache before compiling anything, so the report
+        # afterwards can say what was reused and what had to be built.
+        cache_directory = self._execution_config.compilation_cache_directory
+        cache_before = read_cache_contents(cache_directory)
+        if self._execution_config.enable_telemetry and cache_directory is not None:
+            self._logger.info(
+                "Compilation cache at %s: %s", cache_directory, cache_before.format()
+            )
+
         for bucket in buckets:
             self._logger.info("Warming up %s", bucket.label)
             request = GenerationRequest(
@@ -495,6 +506,9 @@ class Pipeline:
             # computation is already forced by the time it returns. The
             # result is discarded: only the compiled program is wanted.
             self.generate(request)
+
+        if self._execution_config.enable_telemetry and cache_directory is not None:
+            report_cache_effect(cache_before, read_cache_contents(cache_directory), self._logger)
 
         self._logger.info("Warm-up complete for %d resolution(s)", len(buckets))
 
