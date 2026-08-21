@@ -18,8 +18,18 @@ codebase is solely responsible for how they use it.
 
 ## Quick start
 
-Open `notebooks/generate.ipynb` in Kaggle or Colab with a TPU
-accelerator selected, and run it top to bottom. It clones this
+**Kaggle**, which is the faster and better supported path: open
+`notebooks/kaggle_generate.ipynb`, set the accelerator to TPU VM v5e-8,
+attach the weights dataset, and Run All. Weights come from the attached
+dataset rather than a download, and the compilation cache persists in
+`/kaggle/working`, so runs after the first start in seconds.
+
+**Colab** is supported by `notebooks/generate.ipynb` but is
+substantially slower to load: its disk reads at roughly 30 MB/s against
+Kaggle's 1450, so restoring the same 13 GB takes minutes rather than
+seconds. That is a property of the platform, not of this code.
+
+Both run top to bottom. It clones this
 repository, downloads the weights, warms up the compiler, and offers
 three ways to generate: in-notebook controls, a browser interface, or a
 direct call.

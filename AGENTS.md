@@ -641,6 +641,38 @@ compilation cache, not to further restructuring, which makes putting
 the cache somewhere durable the highest-value remaining change on
 Colab.
 
+### Copy whole directories from upstream, never a list of filenames
+
+The converter that produced the bundle named the six tokenizer files it
+wanted. The upstream repository has seven, and the missing one,
+`tokenizer.json`, is the only one that defines the tokenization pipeline
+completely.
+
+Nothing failed. The loader in use at the time could rebuild from
+vocabulary and merges, so the omission stayed invisible for months, and
+surfaced only when a faster tokenizer needing that file could not be
+used on a bundle whose source had shipped it all along.
+
+The directory is 15.9 MB against a bundle of 11 GB. Selecting files to
+save 11 MB at the risk of dropping an important one is a bad trade at
+any ratio. More importantly, a hand-written list encodes today's
+implementation choices into the artifact: whoever wants a different
+loader later finds the bundle already decided against them.
+
+See `conversion/README.md`. The same applies to any directory a future
+bundle carries.
+
+### The chat template lives in one of two places
+
+Upstream repositories disagree. Some embed the template in
+`tokenizer_config.json` under a `chat_template` key; others ship a
+separate `chat_template.jinja` and omit the key. FLUX.2 Klein does the
+latter, Qwen3 the former, and both were verified byte-identical.
+
+`_read_chat_template` checks both. An earlier version checked only the
+embedded key and fell back to the slow tokenizer on a bundle that had
+everything it needed.
+
 ### The fast tokenizer must stay identical, and is tested that way
 
 `src/tokenization/fast.py` replaces the transformers tokenizer with the

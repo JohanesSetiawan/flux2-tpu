@@ -267,3 +267,74 @@ def run_fast_tokenizer_tests(logger: logging.Logger) -> None:
         test_function()
         logger.info("PASS: %s", test_function.__name__)
     logger.info("All fast tokenizer tests passed")
+
+
+def test_regression_chat_template_is_found_in_either_location() -> None:
+    """
+    Upstream repositories disagree about where the chat template lives.
+    Some embed it in tokenizer_config.json; others ship a separate
+    chat_template.jinja and omit the key. The FLUX.2 Klein repository
+    does the latter.
+
+    Both were verified to hold byte-identical templates, so either is
+    correct and both must be read. Checking only the embedded key is how
+    an earlier version fell back to the slower tokenizer on a bundle
+    that had everything it needed.
+    """
+    import json
+    import shutil
+    import tempfile
+
+    directory = _locate_tokenizer_directory()
+    if directory is None:
+        return
+
+    with tempfile.TemporaryDirectory() as workspace:
+        staged = Path(workspace)
+        shutil.copy(directory / "tokenizer.json", staged / "tokenizer.json")
+
+        configuration = json.loads((directory / "tokenizer_config.json").read_text())
+        template = configuration.pop("chat_template", None)
+        if template is None:
+            template = (directory / "chat_template.jinja").read_text()
+
+        # Write the standalone layout: no embedded key, separate file.
+        (staged / "tokenizer_config.json").write_text(json.dumps(configuration))
+        (staged / "chat_template.jinja").write_text(template)
+
+        tokenizer = load_fast_tokenizer(staged, _silent_logger())
+
+        reference = load_fast_tokenizer(directory, _silent_logger())
+        assert tokenizer.render_prompt("a cat") == reference.render_prompt("a cat"), (
+            "the standalone template produced a different rendering than the embedded one"
+        )
+
+
+def test_regression_missing_template_in_both_locations_is_reported() -> None:
+    """A bundle with neither form must say so, naming both places checked."""
+    import shutil
+    import tempfile
+
+    directory = _locate_tokenizer_directory()
+    if directory is None:
+        return
+
+    with tempfile.TemporaryDirectory() as workspace:
+        staged = Path(workspace)
+        shutil.copy(directory / "tokenizer.json", staged / "tokenizer.json")
+        (staged / "tokenizer_config.json").write_text("{}")
+
+        try:
+            load_fast_tokenizer(staged, _silent_logger())
+        except TokenizerFilesMissingError as error:
+            assert "chat_template" in str(error)
+            return
+        raise AssertionError("Expected an error when no chat template is present")
+
+
+_FAST_TOKENIZER_TESTS.extend(
+    [
+        test_regression_chat_template_is_found_in_either_location,
+        test_regression_missing_template_in_both_locations_is_reported,
+    ]
+)

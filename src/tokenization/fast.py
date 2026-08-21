@@ -20,6 +20,13 @@ identifiers against transformers across a range of prompts, and a
 single differing identifier means a different image with no error to
 warn anyone.
 
+Bundles differ in where they put things, and this module accommodates
+both layouts it has encountered: the chat template may be embedded in
+`tokenizer_config.json` or shipped as a separate `chat_template.jinja`.
+Both were verified to hold byte-identical templates. Checking only one
+is how an earlier version fell back to the slower tokenizer on a bundle
+that had everything it needed.
+
 What makes this safe rather than reckless is `tokenizer.json`. That
 file defines the entire tokenization pipeline, normalizer,
 pre-tokenizer, post-processor and decoder, so nothing has to be
@@ -40,6 +47,7 @@ import numpy as np
 
 TOKENIZER_DEFINITION_FILENAME = "tokenizer.json"
 TOKENIZER_CONFIG_FILENAME = "tokenizer_config.json"
+CHAT_TEMPLATE_FILENAME = "chat_template.jinja"
 
 CHAT_TEMPLATE_KEY = "chat_template"
 PAD_TOKEN_KEY = "pad_token"
@@ -140,6 +148,41 @@ class FastTokenizer:
         return token_ids, token_is_real
 
 
+def _read_chat_template(tokenizer_directory: Path, configuration: dict) -> str:
+    """
+    Find the chat template, which lives in one of two places.
+
+    Upstream repositories are inconsistent about this. Some embed the
+    template inside `tokenizer_config.json` under a `chat_template` key;
+    others ship it as a standalone `chat_template.jinja` and leave the
+    key absent. The FLUX.2 Klein repository does the latter, while the
+    Qwen3 repository the tokenizer originates from does the former.
+
+    Both were verified to contain byte-identical templates, so the order
+    of preference below is arbitrary rather than meaningful: whichever
+    is present is correct. What matters is checking both, since an
+    earlier version checked only the embedded key and fell back to a
+    slower tokenizer on a bundle that had everything it needed.
+
+    The template is not optional. The text encoder is instruction tuned
+    and was conditioned on templated input, so an untemplated prompt
+    would produce different conditioning with nothing to signal it.
+    """
+    embedded = configuration.get(CHAT_TEMPLATE_KEY)
+    if embedded:
+        return embedded
+
+    standalone_path = tokenizer_directory / CHAT_TEMPLATE_FILENAME
+    if standalone_path.is_file():
+        return standalone_path.read_text()
+
+    raise TokenizerFilesMissingError(
+        f"No chat template found: neither a {CHAT_TEMPLATE_KEY!r} key in "
+        f"{TOKENIZER_CONFIG_FILENAME} nor a {CHAT_TEMPLATE_FILENAME} file in "
+        f"{tokenizer_directory}."
+    )
+
+
 def load_fast_tokenizer(tokenizer_directory: Path, logger: logging.Logger) -> FastTokenizer:
     """
     Build a tokenizer from the files in a bundle's tokenizer directory.
@@ -178,13 +221,7 @@ def load_fast_tokenizer(tokenizer_directory: Path, logger: logging.Logger) -> Fa
 
     configuration = json.loads(config_path.read_text())
 
-    template_source = configuration.get(CHAT_TEMPLATE_KEY)
-    if not template_source:
-        raise TokenizerFilesMissingError(
-            f"No chat template found in {config_path.name}. The text encoder is "
-            f"instruction tuned and was conditioned on templated input, so an "
-            f"untemplated prompt would produce different conditioning."
-        )
+    template_source = _read_chat_template(tokenizer_directory, configuration)
 
     # Jinja must be told to strip the whitespace the template's control
     # blocks would otherwise emit. transformers configures its
