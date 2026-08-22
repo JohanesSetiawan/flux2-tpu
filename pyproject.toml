@@ -1,0 +1,68 @@
+# Packaging and tool configuration.
+#
+# The package is `src`, which is unusual: the convention is a directory
+# named after the project holding the package. This one is named for its
+# role because the notebooks that drive it import `src` directly from a
+# clone rather than from an installed distribution, and renaming it now
+# would break every notebook already in circulation. Recorded here so
+# the choice reads as deliberate rather than careless.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flux2-tpu"
+version = "0.1.0"
+description = "JAX-native inference for FLUX.2 Klein-4B on TPU"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+
+# Runtime only. Everything needed to load a checkpoint and generate an
+# image, and nothing else: no deep learning framework beyond JAX, and no
+# interface toolkit.
+dependencies = [
+    "jax>=0.4.30",
+    "orbax-checkpoint>=0.5",
+    "numpy>=1.24",
+    "huggingface_hub>=0.20",
+    "tokenizers>=0.15",
+    "jinja2>=3.0",
+]
+
+[project.optional-dependencies]
+# The web and notebook front ends. Imported lazily, so a script user
+# never needs them.
+interfaces = ["gradio>=4.0", "pillow>=10.0", "ipywidgets>=8.0"]
+
+# Only for the parity tests, which compare against the implementations
+# this one was ported from. PyTorch is never imported by the package
+# itself, and transformers only as a tokenizer fallback.
+parity = ["torch", "transformers>=4.51"]
+
+[project.urls]
+Repository = "https://github.com/JohanesSetiawan/flux2-tpu"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.ruff]
+# Matches the width the codebase is already written to.
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    # Long lines are permitted in comments and docstrings, which carry
+    # most of the reasoning in this codebase and read worse when broken
+    # to satisfy a limit.
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test modules import fixtures and helpers from each other rather than
+# duplicating them, and the precision suites deliberately import inside
+# functions to control when JAX initialises.
+"tests/*" = ["E402"]

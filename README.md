@@ -1,5 +1,7 @@
 # flux2-tpu
 
+[![tests](https://github.com/JohanesSetiawan/flux2-tpu/actions/workflows/tests.yml/badge.svg)](https://github.com/JohanesSetiawan/flux2-tpu/actions/workflows/tests.yml)
+
 JAX-native inference for [FLUX.2 Klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)
 on free-tier TPU. No PyTorch anywhere in the runtime.
 
@@ -158,18 +160,46 @@ performs IO and logs every stage.
 ## Testing
 
 ```bash
-python -m tests.run_all_tests                    # 195 unit tests
-JAX_ENABLE_X64=1 python -m tests.run_all_tests   # regression suites need this
+pip install -e .
+JAX_ENABLE_X64=1 python -m tests.run_all_tests   # 202 tests
 ```
 
-Tests come in two tiers. Smoke tests check shape, dtype and execution.
-Regression tests check numerical correctness against independently
-implemented oracles, swept across shapes generated at run time rather
-than compared to stored golden arrays.
+The 64-bit flag is not optional for the regression suites: they compare
+against float64 oracles, and without it they would compare float32
+against float32 and prove much less.
+
+Three kinds of test, answering different questions:
+
+- **Smoke** tests check shape, dtype and that the thing runs.
+- **Regression** tests check numerical correctness against independently
+  implemented oracles, or against properties that must hold. Inputs are
+  generated at run time from seeded shapes rather than compared to
+  stored golden arrays, so a test cannot pass by matching a value that
+  was wrong when it was recorded.
+- **Precision** tests run at bfloat16, the dtype production actually
+  uses, because a suite running entirely in float64 cannot see a dtype
+  promotion. One reached production that way.
 
 Five [integration tests](tests/integration/) need network access and,
 for parity, PyTorch. They are excluded from the unit suite and run
 explicitly.
+
+### What CI does and does not establish
+
+The badge above means the unit suite passes on CPU. That covers logic:
+layer mathematics, attention and rotary conventions, placement
+arithmetic across simulated devices, tokenizer output, and dtype
+preservation.
+
+It does not mean a change works on TPU. Three classes of problem have
+reached production here despite a passing suite, and none can appear on
+CPU: allocation failures, which need real accelerator memory;
+compilation cost, which dominates in practice and is not measurable
+here; and precision modes, which are bit-identical on CPU and differ on
+TPU.
+
+It is a gate against regression in what already works, not evidence
+that something new is correct.
 
 ## Observability
 

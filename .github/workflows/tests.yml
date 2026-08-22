@@ -1,0 +1,64 @@
+# Regression gate for this repository.
+#
+# What this does and does not establish is worth stating plainly,
+# because a green check is easily read as more than it is.
+#
+# It runs the unit suite on CPU. That covers logic: layer mathematics
+# against independent oracles, attention and rotary conventions, device
+# placement arithmetic across simulated devices, tokenizer output, and
+# dtype preservation at production precision.
+#
+# It does not establish that a change works on TPU. Three classes of
+# problem have reached production here despite a passing suite, and none
+# of them can appear on CPU: allocation failures, which need real
+# accelerator memory; compilation cost, which is the dominant expense in
+# practice and is not measurable here; and precision-mode behaviour,
+# where the three settings are bit-identical on CPU and differ on TPU.
+#
+# So this is a gate against regression in what is already known to work,
+# not evidence that something new is correct. Hardware still decides
+# that.
+
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install jax orbax-checkpoint numpy tokenizers jinja2
+
+      - name: Run unit tests
+        # Regression suites compare against float64 oracles, which needs
+        # 64-bit mode; without it they would silently compare float32
+        # against float32 and prove much less.
+        env:
+          JAX_ENABLE_X64: "1"
+        run: python -m tests.run_all_tests --log-file test_run_log.txt
+
+      - name: Upload the run log
+        # Kept even on failure: the log names which suite failed and
+        # carries the assertion message, which is usually enough to
+        # diagnose without reproducing locally.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-run-log
+          path: test_run_log.txt

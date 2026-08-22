@@ -44,6 +44,7 @@ from tests.models.test_text_encoder import run_text_encoder_tests
 from tests.models.test_transformer import run_transformer_tests
 from tests.execution.test_execution import run_execution_tests
 from tests.interfaces.test_interfaces import run_interface_tests
+from tests.precision.test_bfloat16 import run_precision_tests
 from tests.sampling.test_sampling import run_sampling_tests
 from tests.telemetry.test_telemetry import run_telemetry_tests
 from tests.tokenization.test_fast_tokenizer import run_fast_tokenizer_tests
@@ -66,6 +67,7 @@ TEST_SUITES = (
     ("models_text_encoder", run_text_encoder_tests),
     ("models_transformer", run_transformer_tests),
     ("sampling", run_sampling_tests),
+    ("precision", run_precision_tests),
     ("execution", run_execution_tests),
     ("interfaces", run_interface_tests),
     ("telemetry", run_telemetry_tests),
