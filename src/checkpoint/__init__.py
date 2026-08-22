@@ -9,6 +9,7 @@ implementation.
 
 from .hub import (
     MANIFEST_FILE_NAME,
+    bundle_is_complete,
     PARAMETERS_SUBDIRECTORY_NAME,
     TOKENIZER_SUBDIRECTORY_NAME,
     VALID_COMPONENT_NAMES,
@@ -31,6 +32,7 @@ from .restore import (
 
 __all__ = [
     "MANIFEST_FILE_NAME",
+    "bundle_is_complete",
     "MissingParameterError",
     "PARAMETERS_SUBDIRECTORY_NAME",
     "TOKENIZER_SUBDIRECTORY_NAME",

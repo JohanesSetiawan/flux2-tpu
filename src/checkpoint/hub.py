@@ -79,6 +79,41 @@ def resolve_huggingface_token(
     return None
 
 
+def bundle_is_complete(directory: Path) -> bool:
+    """
+    Report whether a directory already holds a usable bundle.
+
+    Checks for the manifest, the tokenizer, and all three parameter
+    components. A partial directory returns False so the caller fetches
+    what is missing rather than failing later on an absent component.
+    """
+    if not (directory / MANIFEST_FILE_NAME).is_file():
+        return False
+    if not (directory / TOKENIZER_SUBDIRECTORY_NAME).is_dir():
+        return False
+    return all(
+        (directory / PARAMETERS_SUBDIRECTORY_NAME / name).is_dir()
+        for name in sorted(VALID_COMPONENT_NAMES)
+    )
+
+
+def _directory_is_writable(directory: Path) -> bool:
+    """
+    Report whether new files can be created under a directory.
+
+    Tested by attempting a write rather than by inspecting permissions,
+    because the case that matters is a read-only mount, where the
+    permission bits can look perfectly ordinary.
+    """
+    probe = directory / ".write_probe"
+    try:
+        probe.touch()
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
 def component_download_patterns(component_names: Iterable[str]) -> list[str]:
     """
     Build Hub file patterns that fetch only the named components, plus
@@ -124,6 +159,29 @@ def download_bundle(
     -------
     Local filesystem path to the root of the downloaded bundle.
     """
+    directory = source_config.local_cache_directory
+
+    # Skip the Hub entirely when everything is already present. This is
+    # not merely an optimisation: the directory may be a read-only mount,
+    # such as an attached dataset, and the download client writes its own
+    # metadata alongside the files it fetches. Attempting a download
+    # there fails on directory creation rather than on anything to do
+    # with the download itself, which is a confusing way to learn that
+    # the weights were sitting there all along.
+    if bundle_is_complete(directory):
+        logger.info("Using the bundle already present at %s; nothing to download", directory)
+        return directory
+
+    if directory.exists() and not _directory_is_writable(directory):
+        raise PermissionError(
+            f"{directory} is read-only and does not contain a complete bundle. "
+            f"Expected {MANIFEST_FILE_NAME}, {TOKENIZER_SUBDIRECTORY_NAME}/, and "
+            f"{PARAMETERS_SUBDIRECTORY_NAME}/ with "
+            f"{sorted(VALID_COMPONENT_NAMES)}. Either attach a complete bundle or "
+            f"point local_cache_directory somewhere writable so the missing parts "
+            f"can be fetched."
+        )
+
     allow_patterns = (
         None if component_names is None else component_download_patterns(component_names)
     )

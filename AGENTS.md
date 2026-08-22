@@ -752,6 +752,25 @@ has four levels of three blocks each, with levels 3, 2 and 1 carrying
 an upsample convolution and level 0 not, but that is an observation
 about the current checkpoint rather than a constant to encode.
 
+### An already-present bundle must skip the download, not attempt it
+
+Weights attached as a Kaggle dataset sit on a read-only mount. The
+download client writes its own metadata alongside whatever it fetches,
+so calling it there fails while creating `.cache/huggingface` rather
+than on anything to do with downloading. The traceback points at
+`mkdir`, which is a confusing way to learn the weights were present the
+whole time.
+
+`download_bundle` now returns immediately when `bundle_is_complete`,
+and raises a message naming what is missing when the directory is
+read-only and incomplete.
+
+A note for anyone testing this: `chmod` does not simulate a read-only
+filesystem when running as root, which ignores permission bits. The
+first attempt at a test did exactly that, started a real 11 GB
+download, and filled the disk. Test against a genuinely read-only mount
+instead.
+
 ### Verify structure from metadata, not by restoring
 
 Checking that the checkpoint is shaped the way the code expects needs

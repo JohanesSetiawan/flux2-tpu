@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from src.checkpoint import (
+    bundle_is_complete,
     VALID_COMPONENT_NAMES,
     component_download_patterns,
     download_bundle,
@@ -114,6 +115,88 @@ def test_regression_component_download_patterns_reject_unknown_component() -> No
     raise AssertionError("Expected ValueError for an unknown component name")
 
 
+def _stage_complete_bundle(root: Path) -> Path:
+    """Create a directory with the layout a usable bundle has."""
+    for component in ("vae", "transformer", "text_encoder"):
+        (root / "params" / component).mkdir(parents=True, exist_ok=True)
+    (root / "tokenizer").mkdir(exist_ok=True)
+    (root / "manifest.json").write_text("{}")
+    return root
+
+
+def test_regression_complete_bundle_is_recognised() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = _stage_complete_bundle(Path(directory))
+        assert bundle_is_complete(root)
+
+
+def test_regression_partial_bundle_is_not_treated_as_complete() -> None:
+    """
+    A directory missing any component must not be mistaken for a usable
+    bundle, or the caller skips the download and fails later on an
+    absent component instead.
+    """
+    import tempfile
+
+    for missing in ("manifest.json", "tokenizer", "params/vae"):
+        with tempfile.TemporaryDirectory() as directory:
+            root = _stage_complete_bundle(Path(directory))
+            target = root / missing
+            if target.is_dir():
+                target.rmdir()
+            else:
+                target.unlink()
+
+            assert not bundle_is_complete(root), (
+                f"a bundle missing {missing} was reported as complete"
+            )
+
+
+def test_regression_present_bundle_skips_the_download_entirely() -> None:
+    """
+    The fix for a real failure on Kaggle. Weights attached as a dataset
+    sit on a read-only mount, and the download client writes its own
+    metadata alongside whatever it fetches, so calling it there fails on
+    directory creation rather than on anything to do with downloading.
+    The weights were present the whole time.
+    """
+    import tempfile
+    from unittest.mock import patch
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = _stage_complete_bundle(Path(directory))
+        source_config = CheckpointSourceConfig(local_cache_directory=root)
+
+        with patch("src.checkpoint.hub.snapshot_download") as mock_snapshot_download:
+            result = download_bundle(source_config, _silent_logger())
+
+            mock_snapshot_download.assert_not_called()
+            assert result == root
+
+
+def test_regression_writability_probe_detects_a_read_only_mount() -> None:
+    """
+    Writability is tested by attempting a write rather than by reading
+    permission bits, because the case that matters is a read-only mount,
+    where the bits look ordinary. Note that chmod cannot stand in for
+    this when running as root, which ignores them.
+    """
+    from src.checkpoint.hub import _directory_is_writable
+
+    read_only_mounts = [Path("/mnt/skills/public"), Path("/proc/sys/kernel")]
+    available = [path for path in read_only_mounts if path.is_dir()]
+
+    for mount in available:
+        assert not _directory_is_writable(mount), f"{mount} was reported writable"
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as directory:
+        assert _directory_is_writable(Path(directory))
+
+
 _CHECKPOINT_TESTS = [
     test_download_bundle_passes_repo_id_and_token_through,
     test_restore_component_builds_correct_path_and_restores,
@@ -122,6 +205,10 @@ _CHECKPOINT_TESTS = [
     test_regression_download_without_token_still_proceeds,
     test_regression_component_download_patterns_cover_only_requested_components,
     test_regression_component_download_patterns_reject_unknown_component,
+    test_regression_complete_bundle_is_recognised,
+    test_regression_partial_bundle_is_not_treated_as_complete,
+    test_regression_present_bundle_skips_the_download_entirely,
+    test_regression_writability_probe_detects_a_read_only_mount,
 ]
 
 
