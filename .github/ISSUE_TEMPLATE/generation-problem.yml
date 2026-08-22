@@ -1,0 +1,68 @@
+name: Generation problem
+description: Wrong output, a crash, or something slower than expected
+labels: [bug]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most problems here are diagnosable from the run log alone, and
+        most are not from a description of the symptom. The log carries
+        a per-stage timing breakdown, tensor placement per device, and
+        whether the compilation cache was reused, which between them
+        answer most questions before anyone has to reproduce anything.
+
+        It is written to `generation_log.txt` in your working directory
+        and survives the notebook output being cleared.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Run log
+      description: >
+        Paste `generation_log.txt`, or the last hundred lines of it.
+        Include the profile table at minimum. If the problem is a crash,
+        include the traceback.
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Kaggle TPU v5e-8
+        - Colab TPU v5e-1
+        - CPU
+        - Other TPU
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: prompt-and-seed
+    attributes:
+      label: Prompt and seed
+      description: >
+        Only if the problem is with the image itself. The seed is
+        reported after each generation, and without it a result cannot
+        be reproduced.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I ran `pipeline.warm_up()` before generating
+        - label: >
+            I checked whether the log says the compilation cache was
+            reused, if the problem is that something was slow

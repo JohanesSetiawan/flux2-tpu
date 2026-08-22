@@ -230,9 +230,14 @@ default: each point is a host callback that serialises the program.
 
 ## Contributing
 
-Read [AGENTS.md](AGENTS.md) first. It records the architectural
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and what the three
+kinds of test are for, and [AGENTS.md](AGENTS.md) for the architectural
 conventions, the verified model facts this implementation depends on,
 and the hazards that have already caused bugs here.
+
+Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
+Security and safety limitations are documented in
+[SECURITY.md](SECURITY.md).
 
 ## Acknowledgements
 

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions about FLUX.2 itself
+    url: https://github.com/black-forest-labs/flux2
+    about: >
+      Model behaviour, prompting, and licensing questions belong
+      upstream. This repository is a port of the inference code, not the
+      model.
