@@ -56,6 +56,29 @@ Explicit non-goals, each chosen deliberately:
   persistent session: load once, then generate repeatedly with low
   per-request latency. There is no frame-by-frame streaming pipeline.
 
+### What was deliberately not ported
+
+Two things exist in the reference implementation and not here, and
+neither was an oversight:
+
+**Content filters.** The reference ships NSFW and protected-content
+filters for inputs and outputs. Black Forest Labs requires them for the
+9B checkpoints and encourages them for 4B.
+
+**Watermarking.** `watermark.py` in the reference implements
+pixel-layer watermarking for content provenance, alongside documented
+C2PA metadata. Worth knowing: the reference's own command line has the
+call commented out, so it is optional there too.
+
+Both were out of scope for a port whose goal was numerical parity with
+the model. Neither is a setting that can be switched on; adding either
+is separate work.
+
+State this plainly in any user-facing document rather than burying it.
+The weights carry their own safety training from pre-training and
+post-training mitigation, which is a property of the checkpoint and not
+of this code, and is not a substitute for a filter.
+
 ### Coding conventions, non-negotiable
 
 - **No hardcoded values.** Any constant that drives behaviour goes into

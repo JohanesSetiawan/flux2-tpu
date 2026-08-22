@@ -13,10 +13,10 @@ text encoder and diffusion transformer to within float32 rounding.
 > numerics are verified, but it has run on a small number of machines
 > and the API is not yet stable.
 
-> **No safety filtering.** This codebase includes no content
-> moderation, NSFW classifier, or prompt filtering of any kind. The
-> reference pipeline's moderation layer was intentionally not ported.
-> You are responsible for what you generate.
+> **No safety filtering and no watermarking.** This port includes
+> neither, and the reference implementation ships both. See
+> [Licensing and safety](#licensing-and-safety) before deploying this
+> anywhere other people can reach.
 
 ## Quick start
 
@@ -242,9 +242,56 @@ and the hazards that have already caused bugs here.
   for the float32 autoencoder weights matching reference decode
   precision
 
-## License
+## Licensing and safety
 
-Apache-2.0.
+### Licences
 
-The weights are distributed separately under Apache-2.0 by their
-original authors.
+Two separate licences apply, and they are not the same thing:
+
+| | Licence | Commercial use |
+|---|---|---|
+| This code | [Apache-2.0](LICENSE) | Permitted |
+| [FLUX.2 Klein-4B weights](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) | Apache-2.0 | Permitted |
+
+Black Forest Labs released the 4B checkpoint under Apache-2.0
+explicitly for commercial use. Note that this does **not** extend to
+the whole FLUX.2 Klein family: the 9B checkpoints are released under a
+non-commercial licence, and this repository targets 4B only.
+
+The weights are not redistributed here. They come from the upstream
+repository, whose model card also lists
+[out-of-scope uses](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B#out-of-scope-use)
+that apply regardless of the licence.
+
+### What this port leaves out
+
+The reference implementation ships two things this one does not. Both
+omissions are deliberate, and both matter more if you deploy this than
+if you run it yourself.
+
+**Content filters.** The reference repository includes NSFW and
+protected-content filters for both inputs and outputs. Black Forest
+Labs describes these as required for the 9B models and *encouraged* for
+4B. This port has none: no prompt filtering, no output classification,
+nothing.
+
+**Watermarking.** The reference includes pixel-layer watermarking and
+documents C2PA metadata for content provenance, so generated images can
+be identified as synthetic. Neither is implemented here. Images this
+produces carry no marker of any kind.
+
+Neither was omitted because it was judged unnecessary. They were out of
+scope for a port whose goal was numerical parity with the reference
+model, and adding them is a separate piece of work rather than a
+setting to switch on.
+
+If you are running this yourself for research, that is probably fine.
+If you are putting it in front of other people, understand that you are
+deploying a generative model with no safeguards at all, and that the
+upstream authors ship safeguards they encourage you to use.
+
+The model's own safety training remains intact: the checkpoint went
+through the pre-training and post-training mitigations described in the
+[model card](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B).
+That is a property of the weights, not of this code, and it is not a
+substitute for a filter.
