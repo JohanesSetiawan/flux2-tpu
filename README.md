@@ -1,226 +1,181 @@
 # flux2-tpu
 
-JAX-native inference for [FLUX.2 Klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B),
-targeting free-tier TPU: Google Colab v5e-1 and Kaggle v5e-8. No
-PyTorch dependency anywhere in this codebase.
+JAX-native inference for [FLUX.2 Klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)
+on free-tier TPU. No PyTorch anywhere in the runtime.
 
-Weights live separately at
-[johaness14/flux2-klein-4b-jax](https://huggingface.co/johaness14/flux2-klein-4b-jax),
-converted from the original PyTorch checkpoints by a one-time
-conversion pipeline that is not part of this repository.
+Every component is verified numerically against the reference
+implementation it was ported from: the autoencoder to 131 dB PSNR, the
+text encoder and diffusion transformer to within float32 rounding.
 
-## No safety filtering
+> **Status: experimental.** The pipeline works end to end and its
+> numerics are verified, but it has run on a small number of machines
+> and the API is not yet stable.
 
-This codebase includes no content moderation, NSFW classifier, or
-prompt/output filtering of any kind. The reference FLUX.2 pipeline's
-moderation layer was intentionally not ported. Anyone using this
-codebase is solely responsible for how they use it.
+> **No safety filtering.** This codebase includes no content
+> moderation, NSFW classifier, or prompt filtering of any kind. The
+> reference pipeline's moderation layer was intentionally not ported.
+> You are responsible for what you generate.
 
 ## Quick start
 
-**Kaggle** is the supported path: open `notebooks/kaggle.ipynb`, set
-the accelerator to TPU VM v5e-8,
-attach the weights dataset, and Run All. Weights come from the attached
-dataset rather than a download, and the compilation cache persists in
-`/kaggle/working`, so runs after the first start in seconds.
+Open [`notebooks/kaggle.ipynb`](notebooks/kaggle.ipynb) in Kaggle:
 
-Colab runs the same package but has no notebook here yet. Its disk
-reads at roughly 30 MB/s against Kaggle's 1450, so restoring the same
-13 GB takes minutes rather than seconds; that is a property of the
-platform rather than of this code, and is why Kaggle came first. It clones this
-repository, downloads the weights, warms up the compiler, and offers
-three ways to generate: in-notebook controls, a browser interface, or a
-direct call.
+1. Set the accelerator to **TPU VM v5e-8**
+2. Attach the weights dataset
+3. **Run All**
 
-## Status
+The last cell opens a web interface. Type a prompt, press Generate,
+repeat as often as you like.
 
-Every component is implemented and verified against the reference. What
-has **not** been established is performance: none of it has run on real
-TPU hardware, so every latency and memory figure in this project is
-arithmetic rather than measurement.
+The first run compiles the model, which takes a few minutes. Later runs
+reuse the compilation cache from `/kaggle/working` and start in seconds.
 
-| Component | Status |
-|---|---|
-| Configuration, residency strategy, resolution buckets | Done |
-| Checkpoint download and restore | Done |
-| Logging | Done |
-| VAE layer primitives | Done |
-| VAE residual and attention blocks | Done |
-| VAE full decoder assembly | Done |
-| VAE parity against the reference implementation | Done, 131 dB PSNR |
-| Text encoder, complete | Done, parity within 3e-08 |
-| Diffusion transformer, complete | Done, parity within 3e-07 |
-| Sampling loop and generation pipeline | Done |
-| Execution layer: scan, fusion, residency, sharding, cache | Done |
-| Notebook runner, ipywidgets and Gradio interfaces | Done |
+## Why Kaggle
 
-## Design summary
+Both platforms run the same code, but Kaggle is substantially better
+suited to it:
 
-**Model.** FLUX.2 Klein-4B is a 4-step distilled rectified-flow
-text-to-image model. The number of sampling steps and the guidance
-value are fixed by distillation and are not tunable; the reference
-implementation rejects attempts to change them. Speed comes from
-compilation and scheduling, never from altering the sampling
-mathematics.
+| | Kaggle v5e-8 | Colab v5e-1 |
+|---|---|---|
+| TPU chips | 8 | 1 |
+| Restoring 13 GB | ~9 s | ~7 min |
+| Compilation cache | persists in `/kaggle/working` | lost with each VM |
+| Weights | attachable as a dataset | downloaded each session |
 
-**Precision.** Nothing is quantized. The transformer runs in bf16,
-which is the checkpoint's own dtype, and the VAE decoder runs in fp32,
-matching the reference decode path. Output is intended to be identical
-to the reference implementation.
+The load-time gap is disk throughput, roughly 1450 MB/s against 30, and
+is a property of the platforms rather than of this code. A Colab
+notebook may follow; the package itself already runs there.
 
-**Memory.** Fitting a 16 GB single-chip accelerator is handled by
-choosing where each component lives rather than by reducing precision:
+## Requirements
 
-- `FULLY_RESIDENT`: all three components stay in accelerator memory.
-  Suitable for Kaggle v5e-8 (128 GB aggregate).
-- `SWAPPED`: the transformer and VAE decoder stay resident while the
-  text encoder lives in host RAM and enters accelerator memory only
-  while encoding a prompt. Suitable for Colab v5e-1 at full precision.
+- TPU v5e or newer, or CPU for testing
+- Python 3.10+
+- `jax`, `orbax-checkpoint`, `numpy`, `tokenizers`, `jinja2`
 
-The strategy defaults to automatic selection based on the number of
-visible JAX devices, and can be overridden explicitly.
+Optional: `gradio` and `pillow` for the web interface, `transformers`
+only as a tokenizer fallback, `torch` only for parity tests.
 
-**Resolutions.** Three buckets are supported, all sitting below the
-4300-image-token threshold at which the reference sampling schedule
-switches to a formula this checkpoint's 4-step distillation was not
-tuned against:
+## Usage
 
-| Resolution | Aspect ratio | Image tokens |
+```python
+from pathlib import Path
+
+from src.config import CheckpointSourceConfig, ExecutionConfig, InferenceConfig
+from src.interfaces.session import build_request
+from src.pipeline import Pipeline
+from src.utils import configure_logging
+
+logger = configure_logging(Path("run.log"), "flux2_klein")
+
+pipeline = Pipeline(
+    InferenceConfig(
+        checkpoint_source=CheckpointSourceConfig(
+            local_cache_directory=Path("/path/to/weights"),
+        ),
+    ),
+    logger,
+    execution_config=ExecutionConfig(
+        compilation_cache_directory=Path("compilation_cache"),
+    ),
+)
+pipeline.load()
+pipeline.warm_up()
+
+image = pipeline.generate(
+    build_request(
+        prompt="a lighthouse on a rocky shore at dusk",
+        resolution_label="1024x1024",
+        requested_seed=-1,
+        buckets=pipeline.resolution_buckets,
+    )
+)
+```
+
+`generate` returns a float array in unit range, shaped
+`(height, width, 3)`.
+
+## Supported resolutions
+
+| Resolution | Aspect | Image tokens |
 |---|---|---|
 | 1024 x 1024 | 1:1 | 4096 |
 | 1360 x 768 | 16:9 | 4080 |
 | 768 x 1360 | 9:16 | 4080 |
 
-## Layout
+Three, deliberately. Past roughly 4300 image tokens the reference
+sampling schedule switches to a formula derived for a fifty-step model,
+and this checkpoint takes four steps. Exceeding that boundary is a
+quality decision rather than a memory one.
+
+## How it works
+
+FLUX.2 Klein-4B is a four-step distilled rectified-flow model. Three
+components run in sequence:
+
+1. **Text encoder** (Qwen3-4B, 27 of 36 layers) turns a prompt into a
+   7680-wide conditioning tensor
+2. **Diffusion transformer** (5 double-stream and 20 single-stream
+   blocks, hidden size 3072) predicts a velocity field, integrated over
+   four Euler steps
+3. **Autoencoder decoder** turns the resulting latent into an image
+
+The step count and guidance value are fixed by distillation and are not
+tunable; the reference implementation rejects attempts to change them.
+Speed comes from compilation and placement, never from altering the
+sampling mathematics.
+
+**Precision.** Nothing is quantized. The transformer runs in bfloat16,
+which is the checkpoint's own dtype, and the decoder in float32,
+matching the reference decode path.
+
+**Placement.** Parameters are split or replicated across the device
+mesh per component. Splitting divides memory across a pod; replication
+multiplies it, which is why the text encoder's layer stack is split
+rather than copied.
+
+## Architecture
 
 ```
 src/
-├── config/            configuration dataclasses and enumerations
-│   ├── precision.py       NumericPrecision
-│   ├── runtime.py         residency strategy, resolution buckets
-│   ├── vae.py             decoder layer and structure settings
-│   └── checkpoint.py      bundle source, top-level InferenceConfig
-├── utils/             cross-cutting, no model knowledge
-│   └── logging.py
-├── checkpoint/        loading weights and addressing them
-│   ├── hub.py             download from the Hub
-│   ├── restore.py         restore Orbax pytrees
-│   └── parameters.py      flat-key access helpers
-├── layers/            individual mathematical primitives
-│   ├── convolution.py
-│   ├── normalization.py     group norm and RMS norm
-│   ├── positional.py        rotary embedding, half-split pairing
-│   ├── axial_positional.py  rotary embedding, interleaved, multi-axis
-│   ├── embedding.py         sinusoidal timestep embedding
-│   ├── masking.py           causal and padding attention mask
-│   ├── resampling.py
-│   └── activation.py
-├── blocks/            composites assembled from primitives
-│   ├── residual.py
-│   ├── attention.py             autoencoder, single head, unmasked
-│   ├── grouped_query_attention.py   text encoder, masked, rotary
-│   ├── joint_attention.py           transformer, multi-head, unmasked
-│   ├── feedforward.py
-│   ├── gated_mlp.py
-│   ├── modulation.py
-│   ├── double_stream.py
-│   ├── single_stream.py
-│   └── transformer_layer.py
-├── models/            complete networks assembled from blocks
-│   ├── vae.py
-│   ├── text_encoder.py
-│   └── transformer.py
-├── sampling/          rectified-flow sampler
-│   ├── schedule.py        noise levels
-│   ├── euler.py           the integration loop, stepped or fused
-│   └── latent.py          spatial and token forms
-├── execution/         placement and compilation, never semantics
-│   ├── residency.py       which components stay in accelerator memory
-│   ├── sharding.py        splitting parameters across devices
-│   └── compilation.py     persistent compilation cache
-├── telemetry/         run instrumentation, never semantics
-│   ├── stages.py          blocking-aware stage timing and profiles
-│   ├── arrays.py          tensor shape, dtype, size and placement
-│   └── devices.py         platform and accelerator memory
-├── tokenization/      prompt text to padded token identifiers
-│   ├── fast.py            tokenizers plus Jinja, no deep learning framework
-│   └── prompt.py          entry point, falls back to transformers
-├── interfaces/        front ends, wiring only
-│   ├── session.py         input handling both front ends share
-│   ├── widgets.py         in-notebook controls
-│   └── browser.py         Gradio interface
-└── pipeline.py        end-to-end generation, the only stateful module
-
-notebooks/
-└── generate.ipynb     runner; contains no logic, only calls into src
+├── config/          configuration dataclasses; no literal lives outside here
+├── utils/           cross-cutting, no model knowledge
+├── checkpoint/      loading weights and addressing them
+├── telemetry/       timing, placement, compilation and cache reporting
+├── layers/          individual mathematical primitives
+├── blocks/          composites assembled from primitives
+├── models/          complete networks assembled from blocks
+├── sampling/        the rectified-flow sampler
+├── tokenization/    prompt text to padded token identifiers
+├── execution/       placement and compilation, never semantics
+├── interfaces/      front ends; wiring only
+└── pipeline.py      end-to-end generation, the only stateful module
 ```
 
-Dependencies run strictly downward through that list: a layer may
-import from config and utils but never from blocks; a block may import
-from layers but never from models. Numeric code (layers, blocks,
-models) is pure, taking arrays and a configuration object and
-performing no IO or logging. Orchestration code (checkpoint) performs
-IO and logs every stage.
+Dependencies run one way down that list. Numeric code is pure: arrays
+and a config in, arrays out, no IO and no logging. Orchestration
+performs IO and logs every stage.
 
-## Setup
+## Testing
 
 ```bash
-pip install -r requirements.txt
+python -m tests.run_all_tests                    # 195 unit tests
+JAX_ENABLE_X64=1 python -m tests.run_all_tests   # regression suites need this
 ```
 
-## Running the tests
+Tests come in two tiers. Smoke tests check shape, dtype and execution.
+Regression tests check numerical correctness against independently
+implemented oracles, swept across shapes generated at run time rather
+than compared to stored golden arrays.
 
-```bash
-python -m tests.run_all_tests
-python -m tests.run_all_tests --log-file path/to/log.txt
-```
+Five [integration tests](tests/integration/) need network access and,
+for parity, PyTorch. They are excluded from the unit suite and run
+explicitly.
 
-Regression tests compare against float64 reference oracles and
-therefore need 64-bit mode enabled:
+## Observability
 
-```bash
-JAX_ENABLE_X64=1 python -m tests.run_all_tests
-```
-
-Integration tests live in `tests/integration/` and are excluded from
-that run because they require network access and, for parity testing,
-PyTorch. PyTorch is used only to produce reference outputs and is never
-a dependency of the `src` package:
-
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-git clone https://github.com/black-forest-labs/flux2 /tmp/flux2
-python -m tests.integration.test_vae_parity --reference-source-path /tmp/flux2
-```
-
-Tests come in two tiers. Smoke tests check shape, dtype and basic
-execution. Regression tests check numerical correctness against
-independently implemented oracles, swept across a matrix of shapes
-generated at run time rather than compared against stored golden
-arrays.
-
-## Debugging
-
-Per-stage timings, tensor placements and accelerator memory are logged
-automatically. To also watch individual tensors from inside the compiled
-model:
-
-```python
-from src.telemetry import enable_model_tracing, disable_model_tracing
-
-enable_model_tracing("transformer")   # or "vae", "text_encoder", or "" for all
-image = pipeline.generate(request)
-disable_model_tracing()
-```
-
-Each trace point reports shape, dtype and value statistics on every
-execution, including once per block inside a scanned stack. It is off by
-default because each point is a host callback that serialises the
-program; expect a generation to be several times slower while it is on.
-
-Every timed stage also separates compilation from execution
-automatically, which is what distinguishes a stage that will be fast on
-a second run from one that will not:
+Every run reports a timing breakdown separating compilation from
+execution, tensor placement per device, and whether the compilation
+cache was reused:
 
 ```
   stage                            total   compile   share  detail
@@ -229,12 +184,37 @@ a second run from one that will not:
   compilation is 27% of this run and is cached; a repeat should cost about 13.43s
 ```
 
+To trace individual tensors from inside the compiled model:
+
+```python
+from src.telemetry import enable_model_tracing, disable_model_tracing
+
+enable_model_tracing("transformer")   # or "vae", "text_encoder", "" for all
+image = pipeline.generate(request)
+disable_model_tracing()
+```
+
+Each trace point reports shape, dtype and value statistics on every
+execution, including once per block inside a scanned stack. Off by
+default: each point is a host callback that serialises the program.
+
 ## Contributing
 
-Read [AGENTS.md](AGENTS.md) first. It documents the architectural
+Read [AGENTS.md](AGENTS.md) first. It records the architectural
 conventions, the verified model facts this implementation depends on,
 and the hazards that have already caused bugs here.
+
+## Acknowledgements
+
+- [Black Forest Labs](https://github.com/black-forest-labs/flux2) for
+  FLUX.2 and the reference implementation
+- [Comfy-Org](https://huggingface.co/Comfy-Org/vae-text-encorder-for-flux-klein-4b)
+  for the float32 autoencoder weights matching reference decode
+  precision
 
 ## License
 
 Apache-2.0.
+
+The weights are distributed separately under Apache-2.0 by their
+original authors.

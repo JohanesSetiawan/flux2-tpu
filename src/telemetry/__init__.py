@@ -28,7 +28,6 @@ from .arrays import (
 from .cache import CacheContents, read_cache_contents, report_cache_effect
 from .compilation import (
     CompilationRecord,
-    describe_compiled_program,
     discard_pending_compilations,
     log_compilations,
     start_recording_compilations,
@@ -39,8 +38,6 @@ from .tracing import (
     disable_model_tracing,
     enable_model_tracing,
     is_tracing_enabled,
-    trace_finite,
-    trace_parameters,
     trace_tensor,
 )
 
@@ -51,7 +48,6 @@ __all__ = [
     "read_cache_contents",
     "report_cache_effect",
     "DeviceMemory",
-    "describe_compiled_program",
     "discard_pending_compilations",
     "log_compilations",
     "start_recording_compilations",
@@ -62,8 +58,6 @@ __all__ = [
     "disable_model_tracing",
     "enable_model_tracing",
     "is_tracing_enabled",
-    "trace_finite",
-    "trace_parameters",
     "trace_tensor",
     "describe_tree",
     "format_bytes",

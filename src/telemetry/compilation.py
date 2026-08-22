@@ -32,7 +32,6 @@ from dataclasses import dataclass, field
 
 import jax
 
-from .arrays import format_bytes
 
 
 # Event names JAX emits. Each carries a duration in seconds and the name
@@ -194,54 +193,3 @@ def log_compilations(logger: logging.Logger, stage_name: str) -> float:
         )
 
     return total
-
-
-def describe_compiled_program(
-    logger: logging.Logger, label: str, function, *arguments
-) -> None:
-    """
-    Report what a compiled program costs before running it.
-
-    Reports the arithmetic XLA believes the program performs and the
-    memory it will need, which together answer whether a slow stage is
-    slow because it does a great deal of work or because it is executing
-    that work badly. The distinction is not visible from a wall time
-    alone.
-
-    Compiling here is not wasted: JAX caches the result, so the
-    subsequent real call reuses it.
-    """
-    try:
-        lowered = jax.jit(function).lower(*arguments)
-        compiled = lowered.compile()
-    except Exception as error:
-        logger.info("  %s: could not analyse program (%s)", label, type(error).__name__)
-        return
-
-    parts = []
-
-    try:
-        cost = compiled.cost_analysis()
-        flops = cost.get("flops") if isinstance(cost, dict) else None
-        if flops:
-            parts.append(f"{flops / 1e9:.1f} GFLOP")
-    except Exception:
-        pass
-
-    try:
-        memory = compiled.memory_analysis()
-        parts.append(
-            f"temp {format_bytes(memory.temp_size_in_bytes)}, "
-            f"args {format_bytes(memory.argument_size_in_bytes)}, "
-            f"out {format_bytes(memory.output_size_in_bytes)}"
-        )
-    except Exception:
-        pass
-
-    try:
-        parts.append(f"HLO {len(lowered.as_text()) / 1024:.0f} KiB")
-    except Exception:
-        pass
-
-    if parts:
-        logger.info("  %s: %s", label, " | ".join(parts))
